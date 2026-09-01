@@ -216,6 +216,23 @@ body { min-height: 100vh; }
   padding: 10px 8px;
   font-size: 0.85rem;
 }
+/* direction toggle beside the sort dropdown — flips ascending/descending */
+.sort-dir {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 38px;
+  padding: 9px 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sort-dir:hover { border-color: var(--accent); }
 .count { color: var(--muted); font-size: 0.8rem; white-space: nowrap; min-width: 60px; text-align: right; }
 
 .stats { color: var(--muted); font-size: 0.8rem; margin: 0 0 10px; }

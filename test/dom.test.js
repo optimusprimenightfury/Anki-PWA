@@ -129,6 +129,13 @@ const fzstd = devRequire('fzstd');
   assert.ok(ioNote.querySelector('.io-shape.io-polygon'), 'IO: polygon mask');
   assert.ok(ioNote.querySelector('.io-shape.io-text'), 'IO: text mask');
   assert.strictEqual(ioNote.querySelector('.io-overlay').getAttribute('viewBox'), '0 0 640 480', 'IO: placeholder viewBox');
+  // real Anki grammar: normalized text fs (.05 of image height) must become a
+  // readable pixel font size in the placeholder pass (.05 × 480 = 24)
+  const ioLabel = ioNote.querySelector('.io-text-label');
+  assert.strictEqual(ioLabel.getAttribute('font-size'), '24', 'IO: text fs denormalized');
+  assert.strictEqual(ioLabel.textContent, 'Nucleus', 'IO: text label content');
+  // stored angle (2500/10000 turn = 90°) becomes a rotate transform
+  assert.ok(/rotate\(90/.test(ioNote.querySelector('.io-shape.io-ellipse').getAttribute('transform') || ''), 'IO: stored angle → rotate');
   // reveal toggle flips masked ↔ transparent state
   ioNote.querySelector('.io-toggle').click();
   assert.ok(ioNote.querySelector('.io-preview').classList.contains('revealed'), 'IO: reveal toggles');
@@ -138,10 +145,16 @@ const fzstd = devRequire('fzstd');
   const occlValue = ioNote.querySelector('.extra-value .io-summary');
   assert.ok(occlValue && /mask/.test(occlValue.textContent), 'IO: occlusions field summarized, not dumped');
 
-  // ---- card-type filter chips (above the sort dropdown) ------------------------
+  // ---- card-type filter chips (must sit ABOVE the sort mechanism) --------------
   const chips = [...doc.querySelectorAll('.type-chip')];
   assert.strictEqual(chips.length, 6, 'six card-type chips');
   assert.ok(doc.querySelector('#type-bar') && !doc.querySelector('#type-bar').hidden, 'type bar visible');
+  const typeBar = doc.querySelector('#type-bar');
+  const sortSel = doc.querySelector('#sort');
+  assert.ok(
+    typeBar.compareDocumentPosition(sortSel) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    'type chips sit above the sort control'
+  );
   const chipById = (id) => chips.find((c) => c.dataset.type === id);
   assert.strictEqual(chipById('new').querySelector('.chip-count').textContent, '1', 'new chip count');
   assert.strictEqual(chipById('suspended').querySelector('.chip-count').textContent, '1', 'suspended chip count');
@@ -174,6 +187,23 @@ const fzstd = devRequire('fzstd');
   const badges = [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent);
   assert.deepStrictEqual(badges, ['Basic+', 'Basic+', 'Cloze', 'Image Occlusion'], 'sorted by model');
 
+  // direction toggle flips whichever sort is active
+  const sortDir = doc.querySelector('#sort-dir');
+  assert.ok(sortDir, 'sort direction button present');
+  sortDir.click();
+  assert.deepStrictEqual(
+    [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent),
+    ['Image Occlusion', 'Cloze', 'Basic+', 'Basic+'],
+    'descending sort reverses the order'
+  );
+  assert.strictEqual(sortDir.textContent, '↓', 'direction button shows ↓');
+  sortDir.click();
+  assert.deepStrictEqual(
+    [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent),
+    ['Basic+', 'Basic+', 'Cloze', 'Image Occlusion'],
+    'ascending sort restores the order'
+  );
+
   // pencil buttons exist
   assert.strictEqual(doc.querySelectorAll('.edit-btn').length, 4, '4 pencil buttons');
 
@@ -194,6 +224,12 @@ const fzstd = devRequire('fzstd');
   // error banner really dismisses (hidden attribute, not just opacity)
   const errBox = doc.querySelector('#error-box');
   assert.ok(errBox.hidden, 'error box hidden initially');
+  // a failed load raises the banner; Dismiss (and only that) takes it down
+  await window.AnkiInspector.loadApkg(new ArrayBuffer(16), 'garbage.apkg', 16);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(!errBox.hidden, 'error box visible after a failed parse');
+  doc.querySelector('#error-close').click();
+  assert.ok(errBox.hidden, 'error box dismissed by the Dismiss button');
 
   // ---- 2) modern (2022+) package end-to-end: zstd DB + protobuf media --------
   const mbuf = fs.readFileSync(path.join(ROOT, 'test', 'sample-modern.apkg'));
@@ -207,6 +243,51 @@ const fzstd = devRequire('fzstd');
 
   // version surfaced (self-update transparency)
   assert.ok(window.AnkiInspector.version, 'app version exposed');
+
+  // ---- deploy alignment: HTML ?v=, sw.js ASSET_VER and APP_VERSION in lockstep --
+  // (this is what prevents a fresh page from pairing with yesterday's JS/CSS)
+  {
+    const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const swSrc = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+    const v = window.AnkiInspector.version;
+    const assetVer = (swSrc.match(/ASSET_VER\s*=\s*'([^']+)'/) || [])[1];
+    assert.strictEqual(assetVer, v, 'sw.js ASSET_VER matches APP_VERSION (' + v + ')');
+    for (const file of ['css/app.css', 'js/parser.js', 'js/app.js']) {
+      assert.ok(
+        html.includes(file + '?v=' + v),
+        'index.html pins ' + file + ' to ?v=' + v
+      );
+    }
+    assert.ok(/VERSION = 'anki-inspector-v5'/.test(swSrc), 'service worker cache generation bumped');
+    assert.strictEqual(doc.querySelectorAll('main').length, 1, 'exactly one <main> (dropzone is a section)');
+  }
+
+  // ---- occlusion geometry: normalized vs pre-release pixel coordinates -------
+  {
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    const size = { width: 64, height: 40 };
+    window.AnkiInspector.drawIoShapes(svg, [
+      { shape: 'rect', ordinal: 1, props: { left: '.2', top: '.25', width: '.35', height: '.15' } },
+      // pre-release pixel grammar: values > 1 must be used as-is, not scaled
+      { shape: 'rect', ordinal: 2, props: { left: '19.54', top: '8', width: '126.13', height: '33.78' } }
+    ], size);
+    const rects = svg.querySelectorAll('rect');
+    assert.strictEqual(rects.length, 2, 'two rect masks drawn');
+    assert.strictEqual(rects[0].getAttribute('x'), String(0.2 * 64), 'normalized left × width');
+    assert.strictEqual(rects[0].getAttribute('width'), String(0.35 * 64), 'normalized width × width');
+    assert.strictEqual(rects[1].getAttribute('x'), '19.54', 'pixel left used as-is');
+    assert.strictEqual(rects[1].getAttribute('width'), '126.13', 'pixel width used as-is');
+    assert.strictEqual(svg.getAttribute('viewBox'), '0 0 64 40', 'viewBox = natural image size');
+
+    // normalized text fs (.05) is denormalized against the real image height
+    const svg2 = doc.createElementNS(SVG_NS, 'svg');
+    window.AnkiInspector.drawIoShapes(svg2, [
+      { shape: 'text', ordinal: 0, props: { left: '.05', top: '.05', text: 'Hi', fs: '.05', scale: '1.' } }
+    ], { width: 640, height: 480 });
+    const label = svg2.querySelector('.io-text-label');
+    assert.strictEqual(label.getAttribute('font-size'), String(0.05 * 480), 'fs denormalized to pixels');
+  }
 
   console.log('PASS — DOM wiring: render, blob-URL media, expand, search, sort, type chips, image occlusion, deep links + modern zstd/protobuf package');
   process.exit(0);

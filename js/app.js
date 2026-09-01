@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '3.1.0';
+  var APP_VERSION = '3.2.0';
 
   /* --------------------------------- state --------------------------------- */
 
@@ -24,6 +24,7 @@
     media: [],
     files: {},            // "filename.jpg" -> { url, type, bytes } (blob URL)
     sortMode: 'deck',     // 'deck' | 'model' | 'time' | 'text'
+    sortDir: 'asc',       // 'asc' | 'desc' — applies to every sort mode
     filter: '',           // live search text
     typeFilter: defaultTypeFilter(), // card-type visibility toggles (chips)
     expanded: {},         // noteId -> bool (shows full fields)
@@ -57,6 +58,7 @@
     stats: $('#stats'),
     search: $('#search'),
     sort: $('#sort'),
+    sortDir: $('#sort-dir'),
     count: $('#count'),
     typeBar: $('#type-bar'),
     typeChips: $('#type-chips'),
@@ -195,6 +197,10 @@
    * are normalized (0..1). Initially we draw in a 0..1 viewBox that stretches
    * with the image; once the image has loaded we redraw in absolute pixels
    * (viewBox = natural size) so text masks get real font sizes.
+   *
+   * Values may also arrive in ABSOLUTE PIXELS (>1) from pre-release IO ports —
+   * when the real image size is known we detect that per shape and use the
+   * numbers as-is instead of scaling.
    */
   function drawIoShapes(svg, shapes, size) {
     var W = size ? size.width : 1;
@@ -206,18 +212,38 @@
 
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
+    /** normalized fraction → px, or a pre-release pixel value as-is. */
+    function coord(v, total, pixelShape) {
+      var n = num(v);
+      if (pixelShape) return n;              // already absolute pixels
+      return n * total;                      // normalized 0..1 → px
+    }
+    /** Does any geometry number in this shape exceed 1 (= surely pixels)? */
+    function isPixelShape(shape, p) {
+      if (!size) return false;               // only decidable with the real size
+      var vals = [p.left, p.top, p.width, p.height, p.rx, p.ry];
+      if (shape === 'polygon') {
+        String(p.points || '').split(/[\s,]+/).forEach(function (n) { vals.push(n); });
+      }
+      for (var i = 0; i < vals.length; i++) {
+        if (Math.abs(num(vals[i])) > 1.02) return true;
+      }
+      return false;
+    }
+
     shapes.forEach(function (s) {
       var p = s.props || {};
-      var left = num(p.left) * W, top = num(p.top) * H;
+      var px = isPixelShape(s.shape, p);
+      var left = coord(p.left, W, px), top = coord(p.top, H, px);
       var node = null, cx = left, cy = top;
 
       if (s.shape === 'rect') {
-        var w = num(p.width) * W, h = num(p.height) * H;
+        var w = coord(p.width, W, px), h = coord(p.height, H, px);
         node = svgEl('rect', { x: left, y: top, width: w, height: h });
         cx = left + w / 2; cy = top + h / 2;
       } else if (s.shape === 'ellipse') {
-        var rx = ((p.rx != null && p.rx !== '') ? num(p.rx) : num(p.width) / 2) * W;
-        var ry = ((p.ry != null && p.ry !== '') ? num(p.ry) : num(p.height) / 2) * H;
+        var rx = ((p.rx != null && p.rx !== '') ? coord(p.rx, W, px) : coord(p.width, W, px) / 2);
+        var ry = ((p.ry != null && p.ry !== '') ? coord(p.ry, H, px) : coord(p.height, H, px) / 2);
         node = svgEl('ellipse', {
           cx: left + rx, cy: top + ry,
           rx: Math.max(rx, 0), ry: Math.max(ry, 0)
@@ -227,7 +253,7 @@
         var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         var pts = String(p.points || '').trim().split(/\s+/).filter(Boolean).map(function (pair) {
           var xy = pair.split(',');
-          var x = num(xy[0]) * W, y = num(xy[1]) * H;
+          var x = coord(xy[0], W, px), y = coord(xy[1], H, px);
           if (x < minX) minX = x; if (x > maxX) maxX = x;
           if (y < minY) minY = y; if (y > maxY) maxY = y;
           return x.toFixed(2) + ',' + y.toFixed(2);
@@ -237,7 +263,17 @@
           cx = (minX + maxX) / 2; cy = (minY + maxY) / 2;
         }
       } else if (s.shape === 'text') {
-        var fs = num(p.fs, 16) || 16;
+        /*
+         * Anki 23.10+ stores `fs` NORMALIZED to the image height (e.g. .05);
+         * pre-release ports wrote pixel font sizes (e.g. 24). `scale` is the
+         * fabric scaleX factor (1. = unscaled).
+         */
+        var fsRaw = num(p.fs, NaN);
+        var fs;
+        if (isNaN(fsRaw)) fs = H * 0.05;            // default: 5% of the image
+        else if (fsRaw > 0 && fsRaw < 1) fs = fsRaw * H; // normalized
+        else fs = fsRaw;                             // absolute pixels
+        fs = Math.max(fs * (num(p.scale, 1) || 1), 9);
         var text = String(p.text || '');
         var g = svgEl('g');
         var tw = text.length * fs * 0.62 + fs * 0.5;
@@ -250,6 +286,10 @@
           'text-anchor': 'middle'
         });
         label.setAttribute('font-size', fs);
+        var fill = String(p.fill || '');
+        if (/^(#[0-9a-f]{3,8}|rgba?\()/i.test(fill)) {
+          try { label.style.fill = fill; } catch (e) { /* keep default */ }
+        }
         label.textContent = text;
         g.appendChild(label);
         node = g;
@@ -584,27 +624,25 @@
     }
 
     var mode = state.sortMode;
+    var dir = state.sortDir === 'desc' ? -1 : 1;
     out.sort(function (a, b) {
+      var r = 0;
       if (mode === 'model') {
-        var mc = (a.modelName || '').localeCompare(b.modelName || '');
-        if (mc) return mc;
+        r = (a.modelName || '').localeCompare(b.modelName || '');
       } else if (mode === 'time') {
-        var tc = (b.mod || 0) - (a.mod || 0);
-        if (tc) return tc;
+        r = (a.mod || 0) - (b.mod || 0);
       } else if (mode === 'text') {
-        var sc = (a.sfld || '').localeCompare(b.sfld || '');
-        if (sc) return sc;
+        r = (a.sfld || '').localeCompare(b.sfld || '');
       } else {
         // deck: group by first card's deck, then sort field
         var da = (a.cards[0] && a.cards[0].deckName) || '—';
         var db = (b.cards[0] && b.cards[0].deckName) || '—';
-        var cmp = da.localeCompare(db);
-        if (cmp) return cmp;
+        r = da.localeCompare(db);
       }
       // stable, meaningful tie-break for every mode
-      var t = (a.sfld || '').localeCompare(b.sfld || '');
-      if (t) return t;
-      return (a.id || 0) - (b.id || 0);
+      if (!r) r = (a.sfld || '').localeCompare(b.sfld || '');
+      if (!r) r = (a.id || 0) - (b.id || 0);
+      return r * dir;
     });
     return out;
   }
@@ -623,18 +661,21 @@
 
   /* ------------------------------ editing bridge ---------------------------- */
   /*
-   * Deep links into the installed Anki clients. AnkiDroid does NOT handle
-   * intent://note links — an intent:// URL with a Play-Store fallback_url is
-   * what kept bouncing users to the Store. What AnkiDroid DOES expose is a
-   * real, registered deep link (AnkiDroid 2.22+):
+   * Deep links into the installed Anki clients.
    *
-   *     anki://x-callback-url/browser?search=<query>
+   * AnkiDroid registers a real BROWSABLE deep link (verified against its
+   * AndroidManifest + IntentHandler, shipped since v2.17, Aug 2022):
    *
-   * which opens the Card Browser pre-filtered with an Anki search query, so
-   * `nid:<note id>` lands on exactly this note (tap it to edit). AnkiMobile
+   *     anki://x-callback-url/browser?search=<Anki search>
+   *
+   * which opens the Card Browser pre-filtered with the search — `nid:<note
+   * id>` lands on exactly this note (tap the row to edit it). AnkiMobile
    * (2.0.90+) speaks `anki://x-callback-url/search?query=`. We navigate with
-   * the plain anki:// scheme — no intent:// wrapper, no Play Store fallback:
-   * if no client is installed nothing happens instead of a Store redirect.
+   * the plain anki:// scheme — NEVER an intent:// wrapper: an intent:// URL
+   * carries the package name, and Chrome bounces to the Play Store whenever
+   * no handler resolves, which is exactly the old bug. With a bare scheme,
+   * a missing client just does nothing — and a watchdog toast says what to
+   * paste instead.
    */
 
   function ankiDeepLink(note, userAgent) {
@@ -643,7 +684,7 @@
     if (/iPhone|iPad|iPod/i.test(ua)) {
       return 'anki://x-callback-url/search?query=' + nid;   // AnkiMobile
     }
-    return 'anki://x-callback-url/browser?search=' + nid;   // AnkiDroid / desktop try
+    return 'anki://x-callback-url/browser?search=' + nid;   // AnkiDroid 2.17+
   }
 
   function copyText(text) {
@@ -679,16 +720,38 @@
     var target = ankiDeepLink(note);
     // Handy fallback: the exact search term is on the clipboard either way.
     copyText('nid:' + note.id);
+
+    // If a client picks the link up, this tab is hidden/backgrounded. If the
+    // page is still fully visible two seconds later, nothing did — say so,
+    // and stay put (no Play Store redirect, ever).
+    var launched = false;
+    var markLaunched = function () { launched = true; };
+    try {
+      window.addEventListener('pagehide', markLaunched, { once: true });
+      window.addEventListener('blur', markLaunched, { once: true });
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) markLaunched();
+      }, { once: true });
+    } catch (e) { /* older browsers */ }
+
     toast('Opening Anki at note ' + note.id + ' (nid:' + note.id + ' copied)');
     try { window.location.href = target; } catch (e) { /* scheme not handled */ }
     if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* noop */ } }
+
+    setTimeout(function () {
+      if (launched || document.hidden) return;
+      toast('No Anki app answered the link — nid:' + note.id +
+        ' is on your clipboard. Paste it into the search bar in AnkiDroid/Anki.', 5000);
+    }, 2200);
   }
 
   /* --------------------------------- worker -------------------------------- */
 
   function ensureWorker() {
     if (worker) return;
-    worker = new Worker('js/worker.js');
+    // ?v keeps the worker in lockstep with this exact app version, so a
+    // mid-deploy page can never run against a half-updated parser.
+    worker = new Worker('js/worker.js?v=' + APP_VERSION);
     worker.addEventListener('message', function (ev) {
       var m = ev.data;
       if (!m) return;
@@ -795,12 +858,15 @@
       ui.fileName.hidden = false;
       $('#new-file').hidden = false;
       // landing screen fully steps aside — the deck list IS the screen now
+      // (the [hidden]{display:none!important} CSS rule guarantees it really
+      // disappears, whatever display value its class carries)
       ui.dropzone.hidden = true;
       if (ui.helpCard) ui.helpCard.hidden = true;
       ui.main.hidden = false;
       if (ui.typeBar) ui.typeBar.hidden = false;
       renderNotes();
       updateStats();
+      try { document.title = (state.fileName ? state.fileName + ' — ' : '') + 'Anki Inspector'; } catch (e) { /* noop */ }
       try { window.scrollTo(0, 0); } catch (e) { /* noop */ }
     } catch (err) {
       if (reqId !== state.activeRequest) return;
@@ -1000,7 +1066,23 @@
     renderNotes();
   });
 
+  // direction toggle — flips whichever sort mode is active (↑ asc / ↓ desc)
+  if (ui.sortDir) {
+    ui.sortDir.addEventListener('click', function () {
+      state.sortDir = state.sortDir === 'desc' ? 'asc' : 'desc';
+      ui.sortDir.textContent = state.sortDir === 'desc' ? '↓' : '↑';
+      ui.sortDir.setAttribute('aria-label',
+        state.sortDir === 'desc' ? 'Sort descending' : 'Sort ascending');
+      ui.sortDir.title = state.sortDir === 'desc' ? 'Descending — tap for ascending' : 'Ascending — tap for descending';
+      renderNotes();
+    });
+  }
+
   ui.errClose.addEventListener('click', function () { showErrorBox(false); });
+  // the banner must be dismissible in every way — Escape too, not just the button
+  document.addEventListener('keydown', function (e) {
+    if ((e.key === 'Escape' || e.key === 'Esc') && !ui.errBox.hidden) showErrorBox(false);
+  });
   function showErrorBox(on) { ui.errBox.hidden = !on; }
 
   $('#new-file').addEventListener('click', function () { ui.fileInput.click(); });
@@ -1142,7 +1224,8 @@
     handleShareTarget: handleShareTarget,
     ankiDeepLink: ankiDeepLink,
     cardClass: cardClass,
-    buildTypeBar: buildTypeBar
+    buildTypeBar: buildTypeBar,
+    drawIoShapes: drawIoShapes
   };
 
   document.addEventListener('DOMContentLoaded', function () {

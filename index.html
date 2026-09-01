@@ -9,7 +9,9 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/app.css">
+  <!-- ?v pins HTML, CSS and JS to one deploy so a half-updated service worker
+       cache can never mix an old script with a new page (see sw.js: ASSET_VER) -->
+  <link rel="stylesheet" href="css/app.css?v=3.2.0">
 </head>
 <body>
   <header class="topbar">
@@ -37,7 +39,7 @@
     <button id="error-close" class="btn ghost" type="button">Dismiss</button>
   </section>
 
-  <main id="dropzone" class="dropzone">
+  <section id="dropzone" class="dropzone">
     <div class="dropzone-inner">
       <div class="dz-icon" aria-hidden="true">
         <svg viewBox="0 0 48 48" width="72" height="72">
@@ -53,7 +55,7 @@
       <button class="btn primary" id="dz-btn" type="button">Choose file</button>
     </div>
     <p class="privacy-note">🔒 100% on-device — the package is parsed by WebAssembly in your browser and never uploaded.</p>
-  </main>
+  </section>
 
   <section id="help-card" class="help-card" aria-label="How to open a .apkg on Android">
     <details>
@@ -79,6 +81,13 @@
 
   <main id="main" class="main" hidden>
     <div class="toolbar">
+      <!-- card-type visibility toggles sit ABOVE sorting: they decide WHAT is
+           shown; the sort row below only decides the ORDER of what's left -->
+      <div id="type-bar" class="type-bar" hidden>
+        <span class="type-bar-label">Card types:</span>
+        <div id="type-chips" class="type-chips"></div>
+        <button id="type-reset" class="type-reset" type="button" hidden>Reset</button>
+      </div>
       <div class="toolbar-row">
         <input id="search" class="search" type="search" placeholder="Search notes, fields, tags…" autocomplete="off">
         <select id="sort" class="sort" title="Sort order">
@@ -87,12 +96,8 @@
           <option value="time">Sort: modified</option>
           <option value="text">Sort: text</option>
         </select>
+        <button id="sort-dir" class="sort-dir" type="button" title="Ascending — tap for descending" aria-label="Sort ascending">↑</button>
         <span id="count" class="count"></span>
-      </div>
-      <div id="type-bar" class="type-bar" hidden>
-        <span class="type-bar-label">Card types:</span>
-        <div id="type-chips" class="type-chips"></div>
-        <button id="type-reset" class="type-reset" type="button" hidden>Reset</button>
       </div>
     </div>
     <p id="stats" class="stats"></p>
@@ -103,8 +108,9 @@
     <span>Anki Inspector <span id="version" class="version"></span> — client-side <code>.apkg</code> inspection · <a href="https://github.com/optimusprimenightfury/Anki-PWA" target="_blank" rel="noopener">source</a></span>
   </footer>
 
-  <!-- parser core: shared by the worker and the UI (compact/sanitize helpers) -->
-  <script src="js/parser.js"></script>
-  <script src="js/app.js"></script>
+  <!-- parser core: shared by the worker and the UI (compact/sanitize helpers).
+       Keep the ?v below in sync with ASSET_VER in sw.js and APP_VERSION in app.js -->
+  <script src="js/parser.js?v=3.2.0"></script>
+  <script src="js/app.js?v=3.2.0"></script>
 </body>
 </html>

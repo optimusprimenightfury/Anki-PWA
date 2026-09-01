@@ -3,13 +3,17 @@
 Inspect Anki `.apkg` packages **entirely on-device**: WebAssembly SQLite, in-memory
 unzip, zero uploads, no server. Designed for phones and tablets.
 
-> **What's new in v3.1** — drop-zone & notification boxes now properly disappear
-> after a deck loads (the `hidden` attribute is enforced with `!important`, so no
-> CSS `display:flex` rule can keep dead UI on screen); image-occlusion notes
-> render as real masked images with a Reveal toggle; card-type filter chips
-> (New / Learning / Review / Suspended / Buried / No cards) sit above sorting;
-> the ✏️ pencil opens AnkiDroid's Card Browser deep link at the exact note
-> instead of bouncing to the Play Store.
+> **What's new in v3.2** — *atomic self-updates*: every release now pins its
+> HTML/JS/CSS with `?v=` and the service worker (v5) serves those files
+> **network-first**, so an updated app can never keep running a mix of the old
+> and new release (that mix was why the dismiss banner/dropzone stuck around
+> and the pencil still went to the Play Store after a deploy). Image-occlusion
+> parsing now speaks Anki's *actual* grammar — `{{c1::image-occlusion:rect:…}}`
+> with all coordinates normalized, text font sizes as a fraction of the image
+> height, and pre-release pixel-coordinate notes auto-detected. The card-type
+> chips sit **above** the sort dropdown and a ↑/↓ button flips the sort order.
+> The ✏️ pencil deep link gains a watchdog toast when no Anki app answers
+> (still never a Play Store redirect).
 
 - **Web Share Target API v2** — share any `.apkg` straight from the share sheet.
 - **Web Worker offloading** — unzip (`fflate`) + SQLite (`sql.js` WASM) run inside
@@ -20,19 +24,33 @@ unzip, zero uploads, no server. Designed for phones and tablets.
 - **Image occlusion rendering** — Image Occlusion notes (Anki 23.10+/AnkiDroid
   2.20+ *and* the legacy "Image Occlusion Enhanced" add-on) are drawn as the real
   masked image: the base image with the occlusion shapes overlaid, plus a
-  👁 Reveal button to see what is underneath.
-- **Card-type filter chips** — a chip row above the sort dropdown toggles
+  👁 Reveal button to see what is underneath. Both mask grammars are parsed:
+  the marker-free tokens of early ports and the current
+  `{{c1::image-occlusion:rect:top=.25:left=.2:…}}` serialization, with
+  normalized coordinates (incl. text `fs`) and a fallback for pre-release
+  pixel-coordinate notes.
+- **Card-type filter chips** — a chip row **above** the sort dropdown toggles
   New / Learning / Review / Suspended / Buried / No-cards notes on and off,
-  on top of whatever sort order is active.
+  on top of whatever sort order is active; a ↑/↓ button flips the direction
+  of the sort itself.
 - **Compact single-line note list** — excessive `<br>` / `<p>` noise is stripped
   while formatting and inline SVGs are preserved; tap ▾ for full fields.
 - **Editor bridge** — the ✏️ button per note opens the installed client at that
   exact note: AnkiDroid's registered deep link
-  `anki://x-callback-url/browser?search=nid:<id>` (Card Browser pre-filtered,
-  AnkiDroid 2.22+) or AnkiMobile's `anki://x-callback-url/search?query=…`.
-  The `nid:` search term is copied to the clipboard as a fallback; there is
-  deliberately **no Play Store fallback URL**.
-- **Offline-capable** — service worker caches the app shell; parsing works offline.
+  `anki://x-callback-url/browser?search=nid:<id>` (Card Browser pre-filtered —
+  verified against AnkiDroid's `AndroidManifest.xml` intent filter, shipped
+  since v2.17, Aug 2022) or AnkiMobile's `anki://x-callback-url/search?query=…`
+  (2.0.90+). The `nid:` search term is copied to the clipboard as a fallback,
+  and if no app answers within ~2 s a toast says what to paste. There is
+  deliberately **no `intent://` wrapper and no Play Store fallback URL** — an
+  `intent://` link carries the package name and Chrome bounces straight to the
+  Store when nothing resolves it, which is exactly the old bug.
+- **Offline-capable + self-updating** — the service worker (v5) caches the app
+  shell for offline use, checks for updates whenever the app becomes visible,
+  and reloads itself once with a toast when a new version lands — no
+  reinstall. Each release pins its shell files with `?v=` and the worker serves
+  them network-first, so a session can never end up running a half-updated mix
+  of two releases.
 
 ## Supported package formats — legacy + new + upcoming
 

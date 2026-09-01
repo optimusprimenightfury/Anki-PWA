@@ -19,18 +19,44 @@
  * v3: answers SKIP_WAITING so the page can apply an update immediately.
  * v4: cache bump shipping the card-type filter chips, image-occlusion
  *     rendering and the dropzone/banner [hidden] fixes.
+ * v5: fixes HALF-UPDATED sessions. With stale-while-revalidate, the first
+ *     load after a deploy could pair the fresh index.html with the PREVIOUS
+ *     release's app.js/app.css (banner that won't dismiss, dropzone that
+ *     won't go away, old Play-Store pencil link…). Now:
+ *       - every deploy pins its shell assets with ?v=ASSET_VER, so a new
+ *         page can only ever reference its own files, and
+ *       - the volatile shell files (HTML/JS/CSS/manifest) are served
+ *         NETWORK-FIRST with the cache as offline fallback. Heavy, rarely
+ *         changing payloads (sql-wasm, fflate, fzstd, icons) stay SWR.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v4';
-var SHELL = [
-  './',
+var VERSION = 'anki-inspector-v5';
+/*
+ * Must match the ?v= suffixes in index.html and APP_VERSION in js/app.js —
+ * a test asserts all three stay in lockstep. Bump on every release.
+ */
+var ASSET_VER = '3.2.0';
+
+/* Files that change with every release. Served network-first so an already
+ * open install can never keep running yesterday's code after an update. */
+var VOLATILE = [
   './index.html',
-  './manifest.json',
   './css/app.css',
   './js/app.js',
   './js/parser.js',
   './js/worker.js',
+  './manifest.json'
+];
+
+var SHELL = [
+  './',
+  './index.html',
+  './manifest.json?v=' + ASSET_VER,
+  './css/app.css?v=' + ASSET_VER,
+  './js/app.js?v=' + ASSET_VER,
+  './js/parser.js?v=' + ASSET_VER,
+  './js/worker.js?v=' + ASSET_VER,
   './js/fflate.min.js',
   './js/fzstd.min.js',
   './js/sql-wasm.js',
@@ -39,6 +65,12 @@ var SHELL = [
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
+
+/* Pathnames (query stripped) of the network-first files, resolved against
+ * this worker's own URL so it works under any sub-path deploy. */
+var VOLATILE_PATHS = VOLATILE.map(function (v) {
+  return new URL(v, self.location.href).pathname;
+});
 
 self.addEventListener('install', function (event) {
   event.waitUntil(
@@ -149,7 +181,34 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  /* ---- 3) everything else (GET assets): stale-while-revalidate ------------- */
+  /* ---- 3) volatile shell files (HTML/JS/CSS/manifest): network-first ------- */
+  // A page that just updated must run THIS deploy's code, not the mix of the
+  // previous release that stale-while-revalidate would hand out on first hit.
+  if (VOLATILE_PATHS.indexOf(url.pathname) !== -1) {
+    event.respondWith(
+      (async function () {
+        try {
+          var fresh = await fetch(event.request);
+          if (fresh && fresh.ok && fresh.type === 'basic') {
+            var copy = fresh.clone();
+            var cache = await caches.open(VERSION);
+            await cache.put(event.request, copy);
+          }
+          return fresh;
+        } catch (err) {
+          // offline: this version's copy, else any cached variant of the file
+          var cached = await caches.match(event.request, { ignoreSearch: true });
+          if (cached) return cached;
+          return new Response('You are offline and this file was never cached.', {
+            status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+          });
+        }
+      })()
+    );
+    return;
+  }
+
+  /* ---- 4) everything else (GET assets): stale-while-revalidate ------------- */
   event.respondWith(
     (async function () {
       // 3a) the page asks for the stashed shared file back
@@ -193,7 +252,7 @@ self.addEventListener('fetch', function (event) {
   );
 });
 
-/* ---- 4) page asks us to apply a waiting update immediately ---------------- */
+/* ---- 5) page asks us to apply a waiting update immediately ---------------- */
 self.addEventListener('message', function (event) {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
