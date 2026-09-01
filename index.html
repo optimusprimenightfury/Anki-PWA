@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Anki Inspector</title>
+  <meta name="description" content="Inspect Anki .apkg files entirely on-device — WebAssembly SQLite, zero uploads, no server.">
+  <meta name="theme-color" content="#10131a">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="30" height="30">
+      <span class="brand-name">Anki&nbsp;Inspector</span>
+    </div>
+    <div class="topbar-right">
+      <span id="file-name" class="file-name" hidden></span>
+      <button id="new-file" class="btn" hidden>Open another</button>
+      <button id="install" class="btn primary" hidden>Install app</button>
+    </div>
+  </header>
+
+  <section id="progress-wrap" class="progress-wrap" hidden>
+    <div class="progress-row">
+      <span id="spinner" class="spinner" hidden aria-hidden="true"></span>
+      <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+    </div>
+    <p id="progress-text" class="progress-text">Starting…</p>
+  </section>
+
+  <section id="error-box" class="error-box" hidden>
+    <span id="error-text" class="error-text"></span>
+    <button id="error-close" class="btn ghost" type="button">Dismiss</button>
+  </section>
+
+  <main id="dropzone" class="dropzone">
+    <div class="dropzone-inner">
+      <div class="dz-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="72" height="72">
+          <rect x="6" y="4" width="36" height="40" rx="4" fill="#3b82f6" fill-opacity="0.18" stroke="#5b8cff" stroke-width="2.5"/>
+          <path d="M18 16h12M18 24h12M18 32h7" stroke="#8fb3ff" stroke-width="3" stroke-linecap="round"/>
+          <path d="M30 34l-4-4 4-4M26 30h8" stroke="#7ef0c8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h1>Drop an <code>.apkg</code> file here</h1>
+      <p>or tap to browse · paste from clipboard · share it from Anki/your files</p>
+      <input id="file-input" type="file" accept=".apkg,application/apkg,application/zip,application/octet-stream" hidden>
+      <button class="btn primary" id="dz-btn" type="button">Choose file</button>
+    </div>
+    <p class="privacy-note">🔒 100% on-device — the package is parsed by WebAssembly in your browser and never uploaded.</p>
+  </main>
+
+  <main id="main" class="main" hidden>
+    <div class="toolbar">
+      <input id="search" class="search" type="search" placeholder="Search notes, fields, tags…" autocomplete="off">
+      <select id="sort" class="sort" title="Sort order">
+        <option value="deck">Sort: deck</option>
+        <option value="model">Sort: note type</option>
+        <option value="time">Sort: modified</option>
+        <option value="text">Sort: text</option>
+      </select>
+      <span id="count" class="count"></span>
+    </div>
+    <p id="stats" class="stats"></p>
+    <ul id="note-list" class="note-list"></ul>
+  </main>
+
+  <footer class="footer">
+    <span>Anki Inspector — client-side <code>.apkg</code> inspection · <a href="https://github.com/optimusprimenightfury/Anki-PWA" target="_blank" rel="noopener">source</a></span>
+  </footer>
+
+  <!-- parser core: shared by the worker and the UI (compact/sanitize helpers) -->
+  <script src="js/parser.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+node_modules/
+test/sample.apkg
+.DS_Store
+*.log
