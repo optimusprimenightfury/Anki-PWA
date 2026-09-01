@@ -1,4 +1,6 @@
 node_modules/
 test/sample.apkg
+test/sample-legacy2.apkg
+test/sample-modern.apkg
 .DS_Store
 *.log

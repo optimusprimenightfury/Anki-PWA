@@ -48,7 +48,8 @@
       </div>
       <h1>Drop an <code>.apkg</code> file here</h1>
       <p>or tap to browse · paste from clipboard · share it from Anki/your files</p>
-      <input id="file-input" type="file" accept=".apkg,application/apkg,application/zip,application/octet-stream" hidden>
+      <p class="formats-note">Reads every Anki export format — old&nbsp;2.0, 2.1 and new 2022+ packages — plus <code>.colpkg</code></p>
+      <input id="file-input" type="file" accept=".apkg,.colpkg,application/apkg,application/zip,application/octet-stream" hidden>
       <button class="btn primary" id="dz-btn" type="button">Choose file</button>
     </div>
     <p class="privacy-note">🔒 100% on-device — the package is parsed by WebAssembly in your browser and never uploaded.</p>
@@ -66,6 +67,12 @@
         Not listed? Chrome can take a minute (or up to a day) to refresh installed
         web apps — open the app once, then share again. Meanwhile, <em>Choose file</em>
         above always works, including from inside AnkiDroid’s export dialog.
+      </p>
+      <p class="help-note">
+        A deck that only shows a <em>“Please update to the latest Anki version”</em>
+        note is a modern Anki export — this app reads those directly (no
+        re-export needed). Reload the app once if you still see that note, so
+        the newest version installs itself.
       </p>
     </details>
   </section>
@@ -86,7 +93,7 @@
   </main>
 
   <footer class="footer">
-    <span>Anki Inspector — client-side <code>.apkg</code> inspection · <a href="https://github.com/optimusprimenightfury/Anki-PWA" target="_blank" rel="noopener">source</a></span>
+    <span>Anki Inspector <span id="version" class="version"></span> — client-side <code>.apkg</code> inspection · <a href="https://github.com/optimusprimenightfury/Anki-PWA" target="_blank" rel="noopener">source</a></span>
   </footer>
 
   <!-- parser core: shared by the worker and the UI (compact/sanitize helpers) -->

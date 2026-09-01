@@ -14,12 +14,13 @@
  *   - static assets     → stale-while-revalidate: served instantly from cache,
  *     refreshed in the background so the next load is current.
  *   - the v1 cache self-invalidates: bumping VERSION makes the activate step
- *     delete every cache that is not v2 (old shell + stale shared blobs), so
- *     existing installs migrate without any user action.
+ *     delete every cache that is not current (old shell + stale shared blobs),
+ *     so existing installs migrate without any user action.
+ * v3: answers SKIP_WAITING so the page can apply an update immediately.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v2';
+var VERSION = 'anki-inspector-v3';
 var SHELL = [
   './',
   './index.html',
@@ -29,6 +30,7 @@ var SHELL = [
   './js/parser.js',
   './js/worker.js',
   './js/fflate.min.js',
+  './js/fzstd.min.js',
   './js/sql-wasm.js',
   './js/sql-wasm.wasm',
   './icons/icon.svg',
@@ -189,8 +191,12 @@ self.addEventListener('fetch', function (event) {
   );
 });
 
-/* ---- 4) legacy Web Share Target v1 (GET) — kept for older clients ---------- */
+/* ---- 4) page asks us to apply a waiting update immediately ---------------- */
 self.addEventListener('message', function (event) {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
   if (event.data && event.data.type === 'SHARE_TARGET') {
     event.respondWith(Response.redirect('./?url=' + encodeURIComponent(event.data.url), 302));
   }

@@ -16,6 +16,30 @@ unzip, zero uploads, no server. Designed for phones and tablets.
   the note in the native Anki app.
 - **Offline-capable** — service worker caches the app shell; parsing works offline.
 
+## Supported package formats — legacy + new + upcoming
+
+Every Anki export generation is read directly; **no "Support older Anki
+versions" re-export needed**:
+
+| Generation | Exported by | DB inside the zip | Metadata | Media index |
+|---|---|---|---|---|
+| Legacy 1 | Anki 2.0 | `collection.anki2` (SQLite schema 11, JSON `col`) | — | JSON |
+| Legacy 2 | Anki 2.1 | `collection.anki21` (schema 11, JSON `col`) **+ dummy `collection.anki2`** | `meta` JSON | JSON |
+| Latest | Anki 2.1.50+ / 23.x / 24.x+ | `collection.anki21b` — **zstd-compressed** SQLite, schema 18 (`notetypes`/`fields`/`decks` tables) | zstd+protobuf | zstd+protobuf `MediaEntries` |
+
+Notes on that:
+
+- Modern exports ship a **decoy `collection.anki2`** whose only note says
+  *"Please update to the latest Anki version, then import the .colpkg/.apkg
+  file again."* The inspector always prefers the newest real database
+  (`anki21b` → `anki21` → `anki2`) and never shows that decoy. If you saw that
+  message in an older version of this app — that was the decoy being read.
+- zstd decompression uses the vendored `fzstd` (~8 KB) inside the worker.
+- `.colpkg` (whole-collection exports) uses the same containers and is
+  accepted everywhere `.apkg` is (file picker, drag & drop, share sheet).
+- The parsed generation is shown in the stats line (e.g. `📦 Anki 2022+
+  (anki21b)`) and the app version in the footer.
+
 ## Live demo & hosting
 
 **Right now (this session):** the app is served over HTTPS as the live preview —
@@ -67,9 +91,11 @@ node server.js --port 8080 --lan
 node server.js --port 8080 --tunnel
 ```
 
-Use the generated `test/sample.apkg` to try it out:
+Use the generated samples to try it out:
 
-1. `node test/make-sample.js` → creates `test/sample.apkg`
+1. `node test/make-sample.js` → creates `test/sample.apkg` (Anki 2.0),
+   `test/sample-legacy2.apkg` (Anki 2.1 + decoy) and `test/sample-modern.apkg`
+   (Anki 2022+: zstd + protobuf — what current Anki versions export)
 2. On Android: open the tunnel URL → **Install app** (Add to Home screen) →
    open Files → long-press `sample.apkg` → **Share** → **Anki Inspector**.
 3. Or simply drag & drop / tap to pick the file in the browser.
@@ -106,22 +132,33 @@ If **Anki Inspector** doesn't show up when you tap **Share** on a `.apkg`:
    `application/octet-stream`, `application/zip`, sqlite variants — the
    manifest accept list covers all of them (plus `*/*`), so the app shows for
    any file share.
-6. **App updates no longer need a reinstall.** Since service worker v2, the
-   shell is fetched network-first and assets refresh in the background, so a
-   deployed change appears on the next launch.
+6. **App updates no longer need a reinstall.** The shell is fetched
+   network-first, assets refresh in the background, and an open app tab
+   refreshes itself when a new version arrives (look for the footer version
+   badge). If you were repeatedly told to *"install the latest version"*,
+   either (a) the app was reading Anki's decoy note from a modern export —
+   fixed by the multi-format parser — or (b) the installed copy was stuck on
+   the very first service-worker cache — fixed since SW v2; opening the app
+   once while online is enough.
+7. **A deck shows only one "Please update…" note?** That note is a decoy Anki
+   writes for ancient clients (see *Supported package formats*). Current
+   versions of this app read the real database instead; reload the app once
+   while online to make sure you have it.
 
 ## Architecture
 
 ```
 index.html          app shell (manifest, SW registration hooks)
 manifest.json       Web Share Target v2 + install metadata
-sw.js               share-target POST interception + offline app shell
+sw.js               share-target POST interception + offline app shell (v3)
 js/worker.js        worker entry: protocol + transferables
-js/parser.js        env-agnostic parser core (worker & Node, tested)
-js/app.js           main thread: UI, blob URLs, deep links, share handling
+js/parser.js        env-agnostic parser core: all 3 package generations
+js/app.js           main thread: UI, blob URLs, deep links, share handling,
+                    self-update + install-state detection
 js/fflate.min.js    in-memory unzip (vendored)
+js/fzstd.min.js     zstd decompression for 2022+ packages (vendored)
 js/sql-wasm.js|wasm WASM SQLite (vendored)
-test/               sample .apkg generator + parser/worker tests (Node)
+test/               sample generators (one package per generation) + tests
 ```
 
 ## Privacy

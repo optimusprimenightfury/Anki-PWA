@@ -10,6 +10,12 @@
   "background_color": "#10131a",
   "theme_color": "#10131a",
   "categories": ["education", "utilities", "productivity"],
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://optimusprimenightfury.github.io/Anki-PWA/manifest.json"
+    }
+  ],
   "icons": [
     {
       "src": "icons/icon-192.png",

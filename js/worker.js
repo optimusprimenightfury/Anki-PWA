@@ -12,7 +12,7 @@
  */
 'use strict';
 
-importScripts('fflate.min.js', 'sql-wasm.js', 'parser.js');
+importScripts('fflate.min.js', 'fzstd.min.js', 'sql-wasm.js', 'parser.js');
 
 // Resolve to this worker's own directory so the WASM binary is found
 // regardless of where the app is mounted (e.g. /, /anki/, sub-path deploys).
