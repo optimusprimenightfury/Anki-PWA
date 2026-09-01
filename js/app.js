@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '3.2.0';
+  var APP_VERSION = '3.3.0';
 
   /* --------------------------------- state --------------------------------- */
 
@@ -154,6 +154,45 @@
   /** Is there any media <img/audio/svg> inside this field HTML? */
   function hasMedia(html) {
     return /<img\b|<audio\b|<video\b|<svg\b|\[sound:/i.test(html);
+  }
+
+  /* ------------------------------ cloze rendering --------------------------- */
+
+  /*
+   * Cloze deletions — {{c1::answer}} / {{c1::answer::hint}} / {{c1::}} — are
+   * rendered with the ANSWER visible as [answer] (this is an inspector, not a
+   * reviewer). Every ordinal gets its own colour from a seeded golden-angle
+   * walk around the hue wheel: consecutive cloze numbers always sit far apart
+   * on the wheel, and cN maps to the same colour in every note, every deck,
+   * every reload — no randomness.
+   *
+   * {{cN::image-occlusion:…}} tokens are NOT text clozes; they are left alone
+   * (the occlusion preview draws them).
+   */
+  function clozeColor(ord) {
+    var n = parseInt(ord, 10) || 0;
+    var hue = (n * 137.508) % 360;
+    return {
+      color: 'hsl(' + hue.toFixed(1) + ', 80%, 66%)',
+      bg: 'hsla(' + hue.toFixed(1) + ', 80%, 60%, 0.15)'
+    };
+  }
+
+  function renderClozes(html) {
+    if (!html || html.indexOf('{{c') === -1) return html;
+    return String(html).replace(/\{\{c(\d+)::([\s\S]*?)\}\}/g, function (whole, ord, body) {
+      if (/^\s*image-occlusion:/i.test(body)) return whole;
+      var seg = String(body).split('::');
+      var answer = seg.shift();
+      var hint = seg.join('::');
+      var n = parseInt(ord, 10) || 0;
+      var c = clozeColor(n);
+      var label = answer ? '[' + answer + ']' : '[…]';
+      var title = 'cloze c' + n + (hint ? ' · hint: ' + hint.replace(/"/g, '') : '');
+      return '<span class="cloze" data-ord="' + n + '" title="' + title +
+        '" style="color:' + c.color + ';background:' + c.bg +
+        ';border-bottom:1px dashed ' + c.color + '">' + label + '</span>';
+    });
   }
 
   /* --------------------------- rendering: notes ---------------------------- */
@@ -442,8 +481,17 @@
     if (io) {
       top.appendChild(buildIoPreview(note, io));
     } else {
+      // compact line — EVERY field contributes, so not a single bit of note
+      // content is left out of the row (labels/rich view still via ▾)
       var first = el('div', 'note-first');
-      first.innerHTML = rewriteMedia(fieldPreview(note.fields[0]));
+      var parts = [];
+      for (var fi = 0; fi < note.fields.length; fi++) {
+        var compact = AnkiParser.compactHtml(note.fields[fi]);
+        if (compact) parts.push(renderClozes(compact));
+      }
+      first.innerHTML = parts.length
+        ? rewriteMedia(parts.join(' <span class="field-sep">·</span> '))
+        : '<span class="empty">(empty)</span>';
       top.appendChild(first);
     }
 
@@ -473,9 +521,9 @@
         value.innerHTML = '<span class="io-summary">👁 ' + ioSummary(ioShapesOf(note, io)) +
           ' — use Reveal on the image above</span>';
       } else {
-        value.innerHTML = rewriteMedia(
-          (state.expanded[note.id] ? AnkiParser.richHtml(note.fields[i]) : fieldPreview(note.fields[i]))
-        );
+        value.innerHTML = rewriteMedia(renderClozes(
+          state.expanded[note.id] ? AnkiParser.richHtml(note.fields[i]) : fieldPreview(note.fields[i])
+        ));
       }
       row.appendChild(label);
       row.appendChild(value);
@@ -507,6 +555,75 @@
   }
 
   /* ------------------------------ filtering ------------------------------- */
+
+  /*
+   * Smart token-based search: the query is split on whitespace; a note matches
+   * when EVERY token matches somewhere (AND of substrings). Matching runs
+   * against every field, the tags, the note type name and the deck names, with
+   * cloze markup stripped so "{{c1::two}}" matches "two" but not "c1".
+   */
+  function searchTokens() {
+    return state.filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  }
+
+  function noteHaystack(n) {
+    var decks = [];
+    for (var i = 0; i < (n.cards || []).length; i++) {
+      if (n.cards[i].deckName) decks.push(n.cards[i].deckName);
+    }
+    return (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' ') +
+      ' ' + (n.modelName || '') + ' ' + decks.join(' '))
+      .toLowerCase()
+      .replace(/\{\{c\d+::/g, ' ')
+      .replace(/\}\}/g, ' ');
+  }
+
+  /**
+   * Wrap every occurrence of any search token (case-insensitive) inside a
+   * <mark class="hl">. Runs as a DOM pass over text nodes only — never touches
+   * attributes, SVG internals or already-created marks.
+   */
+  function highlightTokens(root, tokens) {
+    if (!root || !tokens || !tokens.length) return;
+    var parts = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (t) parts.push(t);
+    }
+    if (!parts.length) return;
+    var re = new RegExp('(' + parts.join('|') + ')', 'gi');
+
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach(function (node) {
+      var txt = node.nodeValue;
+      if (!txt) return;
+      var parent = node.parentElement;
+      if (!parent) return;
+      var name = parent.nodeName;
+      if (name === 'SCRIPT' || name === 'STYLE' || name === 'MARK') return;
+      if (parent.closest && parent.closest('svg')) return; // keep SVG geometry intact
+      re.lastIndex = 0;
+      if (!re.test(txt)) return;
+
+      re.lastIndex = 0;
+      var frag = document.createDocumentFragment();
+      var last = 0, m;
+      while ((m = re.exec(txt)) !== null) {
+        if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        var mark = document.createElement('mark');
+        mark.className = 'hl';
+        mark.textContent = m[0];
+        frag.appendChild(mark);
+        last = m.index + m[0].length;
+        if (m[0].length === 0) re.lastIndex++;
+      }
+      if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+      parent.replaceChild(frag, node);
+    });
+  }
 
   /*
    * Card-type classification used by BOTH the toggle chips and the per-card
@@ -611,13 +728,19 @@
   }
 
   function applyFilters() {
-    var q = state.filter.trim().toLowerCase();
+    var toks = searchTokens();
     var out = [];
     for (var i = 0; i < state.notes.length; i++) {
       var n = state.notes[i];
-      if (q) {
-        var hay = (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' ')).toLowerCase();
-        if (hay.indexOf(q) === -1) continue;
+      if (toks.length) {
+        // smart token search: EVERY token must match (AND), each anywhere in
+        // the note's text, tags, note type or deck names
+        var hay = noteHaystack(n);
+        var miss = false;
+        for (var t = 0; t < toks.length; t++) {
+          if (hay.indexOf(toks[t]) === -1) { miss = true; break; }
+        }
+        if (miss) continue;
       }
       if (!notePassesTypeFilter(n)) continue;
       out.push(n);
@@ -648,11 +771,13 @@
   }
 
   function renderNotes() {
+    var toks = searchTokens();
     var list = applyFilters();
     ui.list.innerHTML = '';
     var frag = document.createDocumentFragment();
     list.forEach(function (n) { frag.appendChild(buildNoteNode(n)); });
     ui.list.appendChild(frag);
+    highlightTokens(ui.list, toks); // realtime match highlighting
     ui.count.textContent = list.length.toLocaleString() +
       (list.length !== state.notes.length ? ' / ' + state.notes.length.toLocaleString() : '');
     updateTypeBar();
@@ -668,23 +793,39 @@
    *
    *     anki://x-callback-url/browser?search=<Anki search>
    *
-   * which opens the Card Browser pre-filtered with the search — `nid:<note
-   * id>` lands on exactly this note (tap the row to edit it). AnkiMobile
-   * (2.0.90+) speaks `anki://x-callback-url/search?query=`. We navigate with
-   * the plain anki:// scheme — NEVER an intent:// wrapper: an intent:// URL
-   * carries the package name, and Chrome bounces to the Play Store whenever
-   * no handler resolves, which is exactly the old bug. With a bare scheme,
-   * a missing client just does nothing — and a watchdog toast says what to
-   * paste instead.
+   * One gotcha is baked into AnkiDroid's handler (CardBrowserViewModel):
+   * a DeepLink search does NOT switch the browser to "all decks" — it runs
+   * inside the deck that was last selected in the Card Browser, so a bare
+   * `nid:<id>` reports "not found" whenever that note lives in a different
+   * deck. We therefore scope the search with the note's own deck:
+   *
+   *     deck:"Biology::Cell Division" nid:1004
+   *
+   * Anki's search terms AND together, so this pins the result to exactly the
+   * note, regardless of which deck the browser was last in. AnkiMobile
+   * (2.0.90+) speaks `anki://x-callback-url/search?query=` and understands
+   * the same syntax. We navigate with the plain anki:// scheme — NEVER an
+   * intent:// wrapper: an intent:// URL carries the package name, and Chrome
+   * bounces to the Play Store whenever no handler resolves, which is exactly
+   * the old bug. With a bare scheme, a missing client just does nothing —
+   * and a watchdog toast says what to paste instead.
    */
+
+  /** The Anki search term that isolates exactly this note. */
+  function ankiSearchTerm(note) {
+    var term = 'nid:' + note.id;
+    var deck = note.cards && note.cards[0] && note.cards[0].deckName;
+    if (deck) term = 'deck:"' + String(deck).replace(/"/g, '') + '" ' + term;
+    return term;
+  }
 
   function ankiDeepLink(note, userAgent) {
     var ua = userAgent || navigator.userAgent || '';
-    var nid = encodeURIComponent('nid:' + note.id);
+    var q = encodeURIComponent(ankiSearchTerm(note));
     if (/iPhone|iPad|iPod/i.test(ua)) {
-      return 'anki://x-callback-url/search?query=' + nid;   // AnkiMobile
+      return 'anki://x-callback-url/search?query=' + q;     // AnkiMobile
     }
-    return 'anki://x-callback-url/browser?search=' + nid;   // AnkiDroid 2.17+
+    return 'anki://x-callback-url/browser?search=' + q;     // AnkiDroid 2.17+
   }
 
   function copyText(text) {
@@ -718,8 +859,10 @@
   function openAnkiFor(note) {
     if (!note) return;
     var target = ankiDeepLink(note);
+    var term = ankiSearchTerm(note);
+    var deck = note.cards && note.cards[0] && note.cards[0].deckName;
     // Handy fallback: the exact search term is on the clipboard either way.
-    copyText('nid:' + note.id);
+    copyText(term);
 
     // If a client picks the link up, this tab is hidden/backgrounded. If the
     // page is still fully visible two seconds later, nothing did — say so,
@@ -734,14 +877,14 @@
       }, { once: true });
     } catch (e) { /* older browsers */ }
 
-    toast('Opening Anki at note ' + note.id + ' (nid:' + note.id + ' copied)');
+    toast('Opening ' + (deck ? deck + ' · ' : '') + 'note ' + note.id + ' (search term copied)');
     try { window.location.href = target; } catch (e) { /* scheme not handled */ }
     if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* noop */ } }
 
     setTimeout(function () {
       if (launched || document.hidden) return;
-      toast('No Anki app answered the link — nid:' + note.id +
-        ' is on your clipboard. Paste it into the search bar in AnkiDroid/Anki.', 5000);
+      toast('No Anki app answered the link — “' + term +
+        '” is on your clipboard. Paste it into the Card Browser search bar.', 5000);
     }, 2200);
   }
 
@@ -856,7 +999,6 @@
 
       ui.fileName.textContent = state.fileName + (state.fileSize ? '  (' + fmtBytes(state.fileSize) + ')' : '');
       ui.fileName.hidden = false;
-      $('#new-file').hidden = false;
       // landing screen fully steps aside — the deck list IS the screen now
       // (the [hidden]{display:none!important} CSS rule guarantees it really
       // disappears, whatever display value its class carries)
@@ -1079,13 +1221,17 @@
   }
 
   ui.errClose.addEventListener('click', function () { showErrorBox(false); });
+
+  // (no "Open another" button: reloading/reopening the app returns to the
+  // picker — one obvious way to load a different file, zero toolbar clutter)
   // the banner must be dismissible in every way — Escape too, not just the button
   document.addEventListener('keydown', function (e) {
     if ((e.key === 'Escape' || e.key === 'Esc') && !ui.errBox.hidden) showErrorBox(false);
   });
   function showErrorBox(on) { ui.errBox.hidden = !on; }
 
-  $('#new-file').addEventListener('click', function () { ui.fileInput.click(); });
+  // (the old "#new-file / Open another" button was removed by design — the
+  // share sheet, the file picker on relaunch, or reloading covers it)
 
   /* ------------------------------ install prompt ---------------------------- */
   /*
@@ -1223,9 +1369,11 @@
     loadApkg: loadApkg,
     handleShareTarget: handleShareTarget,
     ankiDeepLink: ankiDeepLink,
+    ankiSearchTerm: ankiSearchTerm,
     cardClass: cardClass,
     buildTypeBar: buildTypeBar,
-    drawIoShapes: drawIoShapes
+    drawIoShapes: drawIoShapes,
+    renderClozes: renderClozes
   };
 
   document.addEventListener('DOMContentLoaded', function () {

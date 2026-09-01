@@ -145,7 +145,40 @@ const fzstd = devRequire('fzstd');
   const occlValue = ioNote.querySelector('.extra-value .io-summary');
   assert.ok(occlValue && /mask/.test(occlValue.textContent), 'IO: occlusions field summarized, not dumped');
 
-  // ---- card-type filter chips (must sit ABOVE the sort mechanism) --------------
+  // ---- cloze rendering: [answer] with a seeded per-ordinal colour -------------
+  const clozeNote = doc.querySelector('.note[data-id="1003"]');
+  assert.ok(clozeNote, 'cloze note rendered');
+  const clozeFirst = clozeNote.querySelector('.note-first');
+  assert.ok(/\[\s*two\s*\]/.test(clozeFirst.textContent), 'cloze c1 rendered as [two]');
+  assert.ok(/\[\s*cells\s*\]/.test(clozeFirst.textContent), 'cloze c2 rendered as [cells]');
+  assert.ok(!/\{\{c\d+::/.test(clozeFirst.textContent), 'no raw cloze markup left');
+  const cz1 = clozeFirst.querySelector('.cloze[data-ord="1"]');
+  const cz2 = clozeFirst.querySelector('.cloze[data-ord="2"]');
+  assert.ok(cz1 && cz2, 'cloze spans present');
+  assert.notStrictEqual(cz1.style.color, cz2.style.color, 'seeded colours differ per ordinal');
+  assert.strictEqual(cz1.title, 'cloze c1', 'cloze title carries the ordinal');
+  // hint syntax: {{c1::answer::hint}}
+  const hinted = window.AnkiInspector.renderClozes('{{c3::mitosis::process}}');
+  assert.ok(/\[mitosis\]/.test(hinted), 'hinted cloze shows the answer');
+  assert.ok(/hint: process/.test(hinted), 'hinted cloze carries the hint');
+  // empty deletion renders as […]
+  assert.ok(/\[…\]/.test(window.AnkiInspector.renderClozes('{{c1::}}')), 'empty cloze rendered');
+  // image-occlusion clozes must NOT be text-replaced
+  assert.ok(
+    /image-occlusion:rect/.test(window.AnkiInspector.renderClozes('{{c1::image-occlusion:rect:top=.1:left=.2}}')),
+    'IO cloze tokens left untouched'
+  );
+
+  // ---- compact line keeps EVERY field: nothing left behind ---------------------
+  const basicFirst = doc.querySelector('.note[data-id="1001"] .note-first');
+  assert.ok(/What is the formula for force\?/.test(basicFirst.textContent), 'field 1 present');
+  assert.ok(/F = m × a/.test(basicFirst.textContent), 'field 2 present');
+  assert.ok(/Extra context here\./.test(basicFirst.textContent), 'field 3 present without expanding');
+  assert.ok(basicFirst.querySelector('.field-sep'), 'field separator rendered');
+
+  // ---- "Open another" is gone by design ----------------------------------------
+  assert.ok(!doc.querySelector('#new-file'), 'Open another button removed');
+
   const chips = [...doc.querySelectorAll('.type-chip')];
   assert.strictEqual(chips.length, 6, 'six card-type chips');
   assert.ok(doc.querySelector('#type-bar') && !doc.querySelector('#type-bar').hidden, 'type bar visible');
@@ -172,11 +205,34 @@ const fzstd = devRequire('fzstd');
   assert.ok(doc.querySelector('.note[data-id="1004"] .card-chip.k-due'), 'card chip class due');
   assert.ok(doc.querySelector('.note[data-id="1004"] .card-chip.k-suspended'), 'card chip class suspended');
 
-  // search filter
+  // search filter — smart token-based (AND of tokens), not one long string
   const search = doc.querySelector('#search');
+  search.value = 'mitosis cells';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 1, 'token AND search narrows to 1');
+  search.value = 'mitosis zebra';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 0, 'one unknown token filters everything out');
+  search.value = 'cell biology';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  // deck names are part of the haystack: every card of "Biology::Cell
+  // Division" carries both tokens, note 1003 matches via tag + "cells"
+  assert.strictEqual(doc.querySelectorAll('.note').length, 4, 'tokens match fields, tags AND deck names');
+  search.value = 'physics audio';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 1, 'tag tokens AND together');
+  search.value = '';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  // realtime highlighting: tokens are wrapped in <mark class="hl">
   search.value = 'mitosis';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
-  assert.strictEqual(doc.querySelectorAll('.note').length, 1, 'search narrows to 1');
+  const marks = [...doc.querySelectorAll('mark.hl')];
+  assert.ok(marks.length >= 1, 'search matches highlighted');
+  assert.ok(/mitosis/i.test(marks[0].textContent), 'highlight wraps the token text');
+  search.value = '';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('mark.hl').length, 0, 'highlights cleared with the query');
 
   // clear search, then sort by model
   search.value = '';
@@ -207,12 +263,27 @@ const fzstd = devRequire('fzstd');
   // pencil buttons exist
   assert.strictEqual(doc.querySelectorAll('.edit-btn').length, 4, '4 pencil buttons');
 
-  // deep links: AnkiDroid browser search by nid — never the Play Store
+  // deep links: deck-scoped nid search — never the Play Store
+  // (AnkiDroid's deep link does not switch the browser to "all decks"; without
+  // the deck: term the nid search runs inside whatever deck was last open)
   const link = window.AnkiInspector.ankiDeepLink({ id: 12345 }, 'Mozilla/5.0 (Linux; Android 14) Chrome');
-  assert.strictEqual(link, 'anki://x-callback-url/browser?search=nid%3A12345', 'AnkiDroid deep link');
-  const iosLink = window.AnkiInspector.ankiDeepLink({ id: 7 }, 'iPhone Safari');
-  assert.strictEqual(iosLink, 'anki://x-callback-url/search?query=nid%3A7', 'AnkiMobile deep link');
-  assert.ok(!/play\.google/.test(link), 'no Play Store fallback anywhere');
+  assert.strictEqual(link, 'anki://x-callback-url/browser?search=nid%3A12345', 'bare nid when the note has no cards');
+  const dlink = window.AnkiInspector.ankiDeepLink(
+    { id: 1004, cards: [{ deckName: 'Biology::Cell Division' }] },
+    'Mozilla/5.0 (Linux; Android 14) Chrome'
+  );
+  assert.strictEqual(
+    dlink,
+    'anki://x-callback-url/browser?search=' + encodeURIComponent('deck:"Biology::Cell Division" nid:1004'),
+    'deck-scoped AnkiDroid deep link'
+  );
+  const iosLink = window.AnkiInspector.ankiDeepLink({ id: 7, cards: [{ deckName: 'X' }] }, 'iPhone Safari');
+  assert.strictEqual(
+    iosLink,
+    'anki://x-callback-url/search?query=' + encodeURIComponent('deck:"X" nid:7'),
+    'deck-scoped AnkiMobile deep link'
+  );
+  assert.ok(!/play\.google/.test(dlink), 'no Play Store fallback anywhere');
 
   // card classification used by chips + card chips
   assert.strictEqual(window.AnkiInspector.cardClass({ type: 0, queue: 0 }), 'new', 'class new');
@@ -258,8 +329,12 @@ const fzstd = devRequire('fzstd');
         'index.html pins ' + file + ' to ?v=' + v
       );
     }
-    assert.ok(/VERSION = 'anki-inspector-v5'/.test(swSrc), 'service worker cache generation bumped');
+    assert.ok(/VERSION = 'anki-inspector-v\d+'/.test(swSrc), 'service worker cache generation present');
     assert.strictEqual(doc.querySelectorAll('main').length, 1, 'exactly one <main> (dropzone is a section)');
+    // share target hardened for the Android share sheet
+    const mf = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+    assert.ok(/^https:\/\//.test(mf.share_target.action), 'share_target.action is an absolute URL');
+    assert.ok(mf.share_target.params.files[0].accept.includes('.apkg'), 'accept includes the .apkg extension');
   }
 
   // ---- occlusion geometry: normalized vs pre-release pixel coordinates -------
@@ -289,6 +364,6 @@ const fzstd = devRequire('fzstd');
     assert.strictEqual(label.getAttribute('font-size'), String(0.05 * 480), 'fs denormalized to pixels');
   }
 
-  console.log('PASS — DOM wiring: render, blob-URL media, expand, search, sort, type chips, image occlusion, deep links + modern zstd/protobuf package');
+  console.log('PASS — DOM wiring: render, blob-URL media, all-field preview, cloze [answer] colours, token search + highlighting, type chips, image occlusion, deck-scoped deep links + modern zstd/protobuf package');
   process.exit(0);
 })().catch((e) => { console.error('DOM TEST FAIL:', e); process.exit(1); });

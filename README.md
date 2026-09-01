@@ -3,19 +3,46 @@
 Inspect Anki `.apkg` packages **entirely on-device**: WebAssembly SQLite, in-memory
 unzip, zero uploads, no server. Designed for phones and tablets.
 
-> **What's new in v3.2** — *atomic self-updates*: every release now pins its
-> HTML/JS/CSS with `?v=` and the service worker (v5) serves those files
-> **network-first**, so an updated app can never keep running a mix of the old
-> and new release (that mix was why the dismiss banner/dropzone stuck around
-> and the pencil still went to the Play Store after a deploy). Image-occlusion
-> parsing now speaks Anki's *actual* grammar — `{{c1::image-occlusion:rect:…}}`
-> with all coordinates normalized, text font sizes as a fraction of the image
-> height, and pre-release pixel-coordinate notes auto-detected. The card-type
-> chips sit **above** the sort dropdown and a ↑/↓ button flips the sort order.
-> The ✏️ pencil deep link gains a watchdog toast when no Anki app answers
-> (still never a Play Store redirect).
+> **What's new in v3.3** — *cloze support*: `{{c1::answer}}` renders as
+> **`[answer]`**, each cloze number in its own colour (seeded golden-angle
+> palette — c1 is always the same colour, everywhere). The compact row now
+> shows **every** field, so no bit of note content is left out, and inline
+> images got one consistent, eye-comfortable size. Search is **token-based
+> (AND)** across fields, tags, note types *and* deck names, with live
+> `<mark>` highlighting of every match. The ✏️ pencil now scopes its AnkiDroid
+> search with `deck:"<deck>" nid:<id>` — AnkiDroid's deep link otherwise
+> searches whatever deck was last open and reports "not found". The Android
+> share sheet registration was hardened (absolute `share_target.action`,
+> `.apkg`/`.colpkg` extensions, split icon purposes). The toolbar scrolls away
+> with the page and the redundant "Open another" button is gone.
+>
+> **v3.2** — *atomic self-updates*: every release pins its HTML/JS/CSS with
+> `?v=` and the service worker serves those files network-first, so an updated
+> app can never keep running a mix of the old and new release (that mix was
+> why the dismiss banner/dropzone stuck around and the pencil still went to
+> the Play Store after a deploy). Image-occlusion parsing speaks Anki's actual
+> grammar — `{{c1::image-occlusion:rect:…}}` with all coordinates normalized,
+> text font sizes as a fraction of the image height, and pre-release
+> pixel-coordinate notes auto-detected. The card-type chips sit above the sort
+> dropdown with a ↑/↓ direction button.
 
 - **Web Share Target API v2** — share any `.apkg` straight from the share sheet.
+  The manifest uses an **absolute** `share_target.action` (relative actions are
+  a known reason Chrome never lists the app), accepts `.apkg`/`.colpkg`
+  *extensions* next to the MIME types, and splits `any`/`maskable` icons. If
+  the app still doesn't appear: check ⋮ *More* in the sheet (MIUI/One UI hide
+  web apps there), launch the app once so Chrome refreshes the WebAPK, or
+  remove + reinstall the home-screen icon — Android caches the registration.
+- **Cloze rendering** — `{{c1::answer}}` / `{{c1::answer::hint}}` / `{{c1::}}`
+  render as `[answer]` (inspector, not reviewer) with a deterministic
+  per-ordinal colour (golden-angle hue walk); hover shows the cloze number and
+  hint. `{{cN::image-occlusion:…}}` tokens are left to the occlusion renderer.
+- **Token-based smart search** — the query is split into tokens; a note
+  matches when **every** token matches somewhere in its fields, tags, note
+  type or deck names. All matches are highlighted live with `<mark>`.
+- **Complete compact rows** — the single-line preview joins *all* fields
+  (separated by ·) and is never clamped: nothing in the note is left behind;
+  inline media renders at one consistent size.
 - **Web Worker offloading** — unzip (`fflate`) + SQLite (`sql.js` WASM) run inside
   a worker, so the UI never blocks or OOMs on hardware-constrained tablets.
 - **Media mapping** — `media` JSON keys are mapped to real filenames; every image,
@@ -36,15 +63,18 @@ unzip, zero uploads, no server. Designed for phones and tablets.
 - **Compact single-line note list** — excessive `<br>` / `<p>` noise is stripped
   while formatting and inline SVGs are preserved; tap ▾ for full fields.
 - **Editor bridge** — the ✏️ button per note opens the installed client at that
-  exact note: AnkiDroid's registered deep link
-  `anki://x-callback-url/browser?search=nid:<id>` (Card Browser pre-filtered —
-  verified against AnkiDroid's `AndroidManifest.xml` intent filter, shipped
-  since v2.17, Aug 2022) or AnkiMobile's `anki://x-callback-url/search?query=…`
-  (2.0.90+). The `nid:` search term is copied to the clipboard as a fallback,
-  and if no app answers within ~2 s a toast says what to paste. There is
-  deliberately **no `intent://` wrapper and no Play Store fallback URL** — an
-  `intent://` link carries the package name and Chrome bounces straight to the
-  Store when nothing resolves it, which is exactly the old bug.
+  exact note with a **deck-scoped** search: `deck:"<deck name>" nid:<id>`
+  (AnkiDroid's deep link opens the Card Browser pre-filtered — verified
+  against AnkiDroid's `AndroidManifest.xml` intent filter, shipping since
+  v2.17, Aug 2022 — but it does *not* switch the browser to "all decks", so
+  without the `deck:` term the search runs in whatever deck was last open and
+  reports "not found"). AnkiMobile gets the same term via
+  `anki://x-callback-url/search?query=` (2.0.90+). The search term is copied
+  to the clipboard as a fallback, and if no app answers within ~2 s a toast
+  says what to paste. There is deliberately **no `intent://` wrapper and no
+  Play Store fallback URL** — an `intent://` link carries the package name and
+  Chrome bounces straight to the Store when nothing resolves it, which is
+  exactly the old bug.
 - **Offline-capable + self-updating** — the service worker (v5) caches the app
   shell for offline use, checks for updates whenever the app becomes visible,
   and reloads itself once with a toast when a new version lands — no

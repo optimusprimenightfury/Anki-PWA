@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <!-- ?v pins HTML, CSS and JS to one deploy so a half-updated service worker
        cache can never mix an old script with a new page (see sw.js: ASSET_VER) -->
-  <link rel="stylesheet" href="css/app.css?v=3.2.0">
+  <link rel="stylesheet" href="css/app.css?v=3.3.0">
 </head>
 <body>
   <header class="topbar">
@@ -21,7 +21,6 @@
     </div>
     <div class="topbar-right">
       <span id="file-name" class="file-name" hidden></span>
-      <button id="new-file" class="btn" hidden>Open another</button>
       <button id="install" class="btn primary" hidden>Install app</button>
     </div>
   </header>
@@ -66,9 +65,15 @@
         <li>Pick <strong>Anki Inspector</strong> — the deck opens by itself.</li>
       </ol>
       <p class="help-note">
-        Not listed? Chrome can take a minute (or up to a day) to refresh installed
-        web apps — open the app once, then share again. Meanwhile, <em>Choose file</em>
-        above always works, including from inside AnkiDroid’s export dialog.
+        Not in the list? ① Some phones (Xiaomi/MIUI, Samsung One UI at times)
+        hide web apps behind <strong>⋮ More</strong> / <em>“Android Share”</em>
+        in the sheet — look there first. ② Chrome re-reads the share
+        registration when the app launches, then roughly daily — open the
+        installed app once, wait a bit, share again. ③ Still nothing? Remove
+        the home-screen icon and tap <strong>Install app</strong> once more —
+        Android caches share-sheet registration aggressively. Meanwhile,
+        <em>Choose file</em> above always works, including from inside
+        AnkiDroid’s export dialog.
       </p>
       <p class="help-note">
         A deck that only shows a <em>“Please update to the latest Anki version”</em>
@@ -110,7 +115,7 @@
 
   <!-- parser core: shared by the worker and the UI (compact/sanitize helpers).
        Keep the ?v below in sync with ASSET_VER in sw.js and APP_VERSION in app.js -->
-  <script src="js/parser.js?v=3.2.0"></script>
-  <script src="js/app.js?v=3.2.0"></script>
+  <script src="js/parser.js?v=3.3.0"></script>
+  <script src="js/app.js?v=3.3.0"></script>
 </body>
 </html>

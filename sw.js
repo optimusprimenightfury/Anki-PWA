@@ -28,15 +28,18 @@
  *       - the volatile shell files (HTML/JS/CSS/manifest) are served
  *         NETWORK-FIRST with the cache as offline fallback. Heavy, rarely
  *         changing payloads (sql-wasm, fflate, fzstd, icons) stay SWR.
+ * v6: cloze rendering + token search release; manifest share_target hardened
+ *     (absolute action URL, .apkg/.colpkg extensions, split icon purposes)
+ *     so Android lists the app in the share sheet.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v5';
+var VERSION = 'anki-inspector-v6';
 /*
  * Must match the ?v= suffixes in index.html and APP_VERSION in js/app.js —
  * a test asserts all three stay in lockstep. Bump on every release.
  */
-var ASSET_VER = '3.2.0';
+var ASSET_VER = '3.3.0';
 
 /* Files that change with every release. Served network-first so an already
  * open install can never keep running yesterday's code after an update. */
