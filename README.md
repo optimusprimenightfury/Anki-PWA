@@ -18,9 +18,15 @@ unzip, zero uploads, no server. Designed for phones and tablets.
 
 ## Live demo
 
-A persistent tunnel is started during development; see the session for the current
-URL. The app works at any static URL — deploy `main` to GitHub Pages (Settings →
-Pages → `main` branch), Netlify Drop, Cloudflare Pages, or any static host.
+The development session runs a **live HTTPS preview** of this folder — open it on
+your phone to test immediately (see the session's live-preview link).
+
+**Persistent URL (recommended):** merge the open pull request into `main`, then
+enable Pages in the repo (Settings → Pages → Deploy from branch → `main` →
+`/` root). The app then lives permanently at
+`https://optimusprimenightfury.github.io/Anki-PWA/` — HTTPS, installable, share
+target ready. The app also works on Netlify Drop, Cloudflare Pages, or any static
+host.
 
 ## Run locally
 
