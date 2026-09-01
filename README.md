@@ -16,17 +16,33 @@ unzip, zero uploads, no server. Designed for phones and tablets.
   the note in the native Anki app.
 - **Offline-capable** — service worker caches the app shell; parsing works offline.
 
-## Live demo
+## Live demo & hosting
 
-The development session runs a **live HTTPS preview** of this folder — open it on
-your phone to test immediately (see the session's live-preview link).
+**Right now (this session):** the app is served over HTTPS as the live preview —
+open it on your phone to test immediately. Note: this URL only lives while this
+session runs; it is not persistent.
 
-**Persistent URL (recommended):** merge the open pull request into `main`, then
-enable Pages in the repo (Settings → Pages → Deploy from branch → `main` →
-`/` root). The app then lives permanently at
-`https://optimusprimenightfury.github.io/Anki-PWA/` — HTTPS, installable, share
-target ready. The app also works on Netlify Drop, Cloudflare Pages, or any static
-host.
+**Persistent free hosting — GitHub Pages (recommended, 2 taps):**
+1. Merge the open pull request (`main` then contains the app; `404.html`,
+   `.nojekyll`, relative paths are already in place).
+2. On github.com (works from a phone browser): **Settings → Pages →
+   Deploy from a branch → `main` → `/ (root)` → Save**.
+The app is then permanently live (free HTTPS, installable, share target ready) at:
+**`https://optimusprimenightfury.github.io/Anki-PWA/`**
+
+**Temporary persistent alternative — GitHub Codespaces (no admin needed, free tier):**
+1. Open the repo on github.com and create a Codespace (works from a phone browser).
+2. Run `npm start` (or `node server.js`) inside the terminal.
+3. Use the **Ports** panel → open the forwarded port → copy the HTTPS URL
+   (format `https://<codespace-name>-8080.app.github.dev`).
+That URL is persistent with SSL while the Codespace is running, and works exactly
+like the localhost experience — no USB debugging, no desktop required.
+
+**Other free hosts** (any static host works — all paths are relative):
+Netlify (drag-drop or git import), Vercel, Cloudflare Pages (git import),
+Render static sites, surge.sh (CLI). For a PWA that needs HTTPS + service
+workers, GitHub Pages is the simplest free option.
+
 
 ## Run locally
 
