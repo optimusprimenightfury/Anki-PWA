@@ -179,15 +179,43 @@ const fzstd = devRequire('fzstd');
   // ---- "Open another" is gone by design ----------------------------------------
   assert.ok(!doc.querySelector('#new-file'), 'Open another button removed');
 
-  const chips = [...doc.querySelectorAll('.type-chip')];
-  assert.strictEqual(chips.length, 6, 'six card-type chips');
+  const chips = [...doc.querySelectorAll('#type-chips .type-chip')];
+  assert.strictEqual(chips.length, 6, 'six card-state chips');
   assert.ok(doc.querySelector('#type-bar') && !doc.querySelector('#type-bar').hidden, 'type bar visible');
-  const typeBar = doc.querySelector('#type-bar');
-  const sortSel = doc.querySelector('#sort');
-  assert.ok(
-    typeBar.compareDocumentPosition(sortSel) & window.Node.DOCUMENT_POSITION_FOLLOWING,
-    'type chips sit above the sort control'
+
+  // ---- NOTE-TYPE selectors sit ABOVE the card-state selectors -------------------
+  const modelChips = [...doc.querySelectorAll('#model-chips .model-chip')];
+  assert.strictEqual(modelChips.length, 3, 'three note-type chips (Basic+, Cloze, Image Occlusion)');
+  assert.deepStrictEqual(
+    modelChips.map((c) => c.dataset.model),
+    ['Basic+', 'Cloze', 'Image Occlusion'],
+    'note-type chips built from the deck, biggest first'
   );
+  const modelChipsEl = doc.querySelector('#model-chips');
+  const cardChipsEl = doc.querySelector('#type-chips');
+  assert.ok(
+    modelChipsEl.compareDocumentPosition(cardChipsEl) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    'note-type selectors sit above the card-state selectors'
+  );
+  assert.strictEqual(
+    doc.querySelector('.model-chip[data-model="Basic+"] .chip-count').textContent,
+    '2',
+    'note-type chip counts notes'
+  );
+  // toggling a note type off hides its notes…
+  doc.querySelector('.model-chip[data-model="Image Occlusion"]').click();
+  assert.strictEqual(doc.querySelectorAll('.note').length, 3, 'IO note type filtered out');
+  assert.ok(!doc.querySelector('.note[data-id="1004"]'), 'IO note hidden');
+  assert.strictEqual(
+    doc.querySelector('.model-chip[data-model="Image Occlusion"]').getAttribute('aria-pressed'),
+    'false',
+    'note-type chip pressed state'
+  );
+  assert.ok(!doc.querySelector('#type-reset').hidden, 'reset appears when filtering');
+  // …and Reset restores both chip rows
+  doc.querySelector('#type-reset').click();
+  assert.strictEqual(doc.querySelectorAll('.note').length, 4, 'reset restores note types');
+
   const chipById = (id) => chips.find((c) => c.dataset.type === id);
   assert.strictEqual(chipById('new').querySelector('.chip-count').textContent, '1', 'new chip count');
   assert.strictEqual(chipById('suspended').querySelector('.chip-count').textContent, '1', 'suspended chip count');
@@ -205,6 +233,10 @@ const fzstd = devRequire('fzstd');
   assert.ok(doc.querySelector('.note[data-id="1004"] .card-chip.k-due'), 'card chip class due');
   assert.ok(doc.querySelector('.note[data-id="1004"] .card-chip.k-suspended'), 'card chip class suspended');
 
+  // ---- the sort controls are gone by design ------------------------------------
+  assert.ok(!doc.querySelector('#sort'), 'sort dropdown removed');
+  assert.ok(!doc.querySelector('#sort-dir'), 'sort direction button removed');
+
   // search filter — smart token-based (AND of tokens), not one long string
   const search = doc.querySelector('#search');
   search.value = 'mitosis cells';
@@ -213,14 +245,26 @@ const fzstd = devRequire('fzstd');
   search.value = 'mitosis zebra';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
   assert.strictEqual(doc.querySelectorAll('.note').length, 0, 'one unknown token filters everything out');
+  // the haystack is ONLY visible text + tags — not note-type or deck names
   search.value = 'cell biology';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
-  // deck names are part of the haystack: every card of "Biology::Cell
-  // Division" carries both tokens, note 1003 matches via tag + "cells"
-  assert.strictEqual(doc.querySelectorAll('.note').length, 4, 'tokens match fields, tags AND deck names');
+  assert.strictEqual(
+    doc.querySelectorAll('.note').length, 2,
+    'tokens match field text and tags (not deck/note-type names)'
+  );
+  search.value = 'basic';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 0, 'note-type name alone does not match');
+  search.value = 'division';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 0, 'deck name alone does not match');
   search.value = 'physics audio';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
   assert.strictEqual(doc.querySelectorAll('.note').length, 1, 'tag tokens AND together');
+  // HTML attribute noise (media filenames) is not searchable content either
+  search.value = 'cell-diagram.png';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 0, 'media filenames inside markup not matched');
   search.value = '';
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
 
@@ -234,31 +278,20 @@ const fzstd = devRequire('fzstd');
   search.dispatchEvent(new window.Event('input', { bubbles: true }));
   assert.strictEqual(doc.querySelectorAll('mark.hl').length, 0, 'highlights cleared with the query');
 
-  // clear search, then sort by model
-  search.value = '';
-  search.dispatchEvent(new window.Event('input', { bubbles: true }));
-  const sort = doc.querySelector('#sort');
-  sort.value = 'model';
-  sort.dispatchEvent(new window.Event('change', { bubbles: true }));
-  const badges = [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent);
-  assert.deepStrictEqual(badges, ['Basic+', 'Basic+', 'Cloze', 'Image Occlusion'], 'sorted by model');
-
-  // direction toggle flips whichever sort is active
-  const sortDir = doc.querySelector('#sort-dir');
-  assert.ok(sortDir, 'sort direction button present');
-  sortDir.click();
-  assert.deepStrictEqual(
-    [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent),
-    ['Image Occlusion', 'Cloze', 'Basic+', 'Basic+'],
-    'descending sort reverses the order'
-  );
-  assert.strictEqual(sortDir.textContent, '↓', 'direction button shows ↓');
-  sortDir.click();
-  assert.deepStrictEqual(
-    [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent),
-    ['Basic+', 'Basic+', 'Cloze', 'Image Occlusion'],
-    'ascending sort restores the order'
-  );
+  // ---- move-to-top button appears after scrolling and returns to the top -------
+  const toTop = doc.querySelector('#to-top');
+  assert.ok(toTop, 'move-to-top button present');
+  assert.ok(!toTop.classList.contains('show'), 'hidden at the top of the page');
+  let scrolledTo = null;
+  window.scrollTo = (a) => { scrolledTo = a; };
+  Object.defineProperty(window, 'scrollY', { value: 1400, configurable: true });
+  window.dispatchEvent(new window.Event('scroll'));
+  assert.ok(toTop.classList.contains('show'), 'appears after scrolling down');
+  toTop.click();
+  assert.ok(scrolledTo != null && (scrolledTo.top === 0 || scrolledTo === 0), 'click scrolls back to the top');
+  Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+  window.dispatchEvent(new window.Event('scroll'));
+  assert.ok(!toTop.classList.contains('show'), 'hides again at the top');
 
   // pencil buttons exist
   assert.strictEqual(doc.querySelectorAll('.edit-btn').length, 4, '4 pencil buttons');

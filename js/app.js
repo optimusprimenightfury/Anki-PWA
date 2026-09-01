@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '3.3.0';
+  var APP_VERSION = '3.4.0';
 
   /* --------------------------------- state --------------------------------- */
 
@@ -23,10 +23,9 @@
     mediaMap: {},
     media: [],
     files: {},            // "filename.jpg" -> { url, type, bytes } (blob URL)
-    sortMode: 'deck',     // 'deck' | 'model' | 'time' | 'text'
-    sortDir: 'asc',       // 'asc' | 'desc' — applies to every sort mode
     filter: '',           // live search text
-    typeFilter: defaultTypeFilter(), // card-type visibility toggles (chips)
+    typeFilter: defaultTypeFilter(), // card-state visibility toggles (chips)
+    modelFilter: {},      // note-type visibility toggles (chips) — {} = all on
     expanded: {},         // noteId -> bool (shows full fields)
     fileName: '',
     fileSize: 0,
@@ -57,11 +56,10 @@
     list: $('#note-list'),
     stats: $('#stats'),
     search: $('#search'),
-    sort: $('#sort'),
-    sortDir: $('#sort-dir'),
     count: $('#count'),
     typeBar: $('#type-bar'),
     typeChips: $('#type-chips'),
+    modelChips: $('#model-chips'),
     typeReset: $('#type-reset'),
     helpCard: $('#help-card'),
     bar: $('#progress-bar'),
@@ -72,7 +70,8 @@
     errClose: $('#error-close'),
     fileName: $('#file-name'),
     install: $('#install'),
-    spinner: $('#spinner')
+    spinner: $('#spinner'),
+    toTop: $('#to-top')
   };
 
   /* ------------------------------ url plumbing ------------------------------ */
@@ -455,7 +454,7 @@
     var actions = el('div', 'note-actions');
     var pencil = el('button', 'icon-btn edit-btn', '✏️');
     pencil.type = 'button';
-    pencil.title = 'Open this note in Anki';
+    pencil.title = 'Open this note in Anki (deck-scoped search; in AnkiDroid tap the deck name → All decks if it shows no cards)';
     pencil.setAttribute('aria-label', 'Open note ' + note.id + ' in Anki');
     pencil.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -559,23 +558,26 @@
   /*
    * Smart token-based search: the query is split on whitespace; a note matches
    * when EVERY token matches somewhere (AND of substrings). Matching runs
-   * against every field, the tags, the note type name and the deck names, with
-   * cloze markup stripped so "{{c1::two}}" matches "two" but not "c1".
+   * against the note's VISIBLE text (all fields + tags) only — not the note
+   * type name, not deck names, not HTML attribute noise like filenames inside
+   * <img src="…">. Cloze markup is stripped so "{{c1::two}}" matches "two" but
+   * not "c1". Computed once per note and cached.
    */
   function searchTokens() {
     return state.filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
   }
 
   function noteHaystack(n) {
-    var decks = [];
-    for (var i = 0; i < (n.cards || []).length; i++) {
-      if (n.cards[i].deckName) decks.push(n.cards[i].deckName);
-    }
-    return (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' ') +
-      ' ' + (n.modelName || '') + ' ' + decks.join(' '))
+    if (n._hay) return n._hay;
+    n._hay = (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' '))
+      .replace(/\{\{c\d+::/g, ' ')      // cloze wrappers — the inner text stays
+      .replace(/\}\}/g, ' ')
+      .replace(/\[sound:[^\]]*\]/gi, ' ') // media references are not content
+      .replace(/<[^>]+>/g, ' ')           // HTML markup → spaces (drops attributes)
+      .replace(/&[a-z#0-9]+;/gi, ' ')     // entities
       .toLowerCase()
-      .replace(/\{\{c\d+::/g, ' ')
-      .replace(/\}\}/g, ' ');
+      .replace(/\s+/g, ' ');
+    return n._hay;
   }
 
   /**
@@ -663,6 +665,8 @@
   }
 
   function notePassesTypeFilter(note) {
+    // note-type selectors first: a hidden note type hides the note outright
+    if (state.modelFilter && state.modelFilter[note.modelName] === false) return false;
     if (!state.typeFilter) return true;
     var set = noteClasses(note);
     var allOn = true;
@@ -676,7 +680,7 @@
     return false;
   }
 
-  /** Build the toggle chips once; counts/pressed-state refreshed per render. */
+  /** Build the card-state toggle chips once; counts refreshed per render. */
   function buildTypeBar() {
     if (!ui.typeChips) return;
     ui.typeChips.innerHTML = '';
@@ -698,9 +702,49 @@
     if (ui.typeReset) {
       ui.typeReset.addEventListener('click', function () {
         state.typeFilter = defaultTypeFilter();
+        state.modelFilter = {};
         renderNotes();
       });
     }
+  }
+
+  /*
+   * NOTE-TYPE selectors (Basic, Cloze, Image Occlusion, …) — built from the
+   * loaded deck's own note types, sitting ABOVE the card-state chips: they
+   * decide which note types are visible at all. Each chip gets a stable
+   * seeded dot colour so the row is scannable at a glance.
+   */
+  function rebuildModelChips() {
+    if (!ui.modelChips) return;
+    ui.modelChips.innerHTML = '';
+    var counts = {};
+    state.notes.forEach(function (n) {
+      var name = n.modelName || 'Note';
+      counts[name] = (counts[name] || 0) + 1;
+    });
+    var names = Object.keys(counts).sort(function (a, b) {
+      var d = counts[b] - counts[a];
+      return d || a.localeCompare(b);
+    });
+    var frag = document.createDocumentFragment();
+    names.forEach(function (name, idx) {
+      var chip = el('button', 'type-chip model-chip');
+      chip.type = 'button';
+      chip.dataset.model = name;
+      chip.setAttribute('aria-pressed', 'true');
+      chip.title = 'Show/hide notes of type ' + name;
+      chip.appendChild(el('span', 'chip-label', name));
+      chip.appendChild(el('span', 'chip-count', counts[name].toLocaleString()));
+      var hue = ((idx + 1) * 137.508) % 360; // same seeded walk as the clozes
+      chip.style.setProperty('--chip-dot', 'hsl(' + hue.toFixed(1) + ', 80%, 66%)');
+      chip.addEventListener('click', function () {
+        var on = state.modelFilter[name] !== false;
+        state.modelFilter[name] = !on;
+        renderNotes();
+      });
+      frag.appendChild(chip);
+    });
+    ui.modelChips.appendChild(frag);
   }
 
   function updateTypeBar() {
@@ -724,6 +768,15 @@
       var cc = chip.querySelector('.chip-count');
       if (cc) cc.textContent = counts[id].toLocaleString();
     }
+    if (ui.modelChips) {
+      var mchips = ui.modelChips.children;
+      for (var j = 0; j < mchips.length; j++) {
+        var mchip = mchips[j];
+        var mon = state.modelFilter[mchip.dataset.model] !== false;
+        if (!mon) anyOff = true;
+        mchip.setAttribute('aria-pressed', mon ? 'true' : 'false');
+      }
+    }
     if (ui.typeReset) ui.typeReset.hidden = !anyOff;
   }
 
@@ -746,26 +799,15 @@
       out.push(n);
     }
 
-    var mode = state.sortMode;
-    var dir = state.sortDir === 'desc' ? -1 : 1;
+    // fixed, meaningful order: first card's deck, then sort field, then id
+    // (the sort dropdown was removed by design — filters decide WHAT is shown)
     out.sort(function (a, b) {
-      var r = 0;
-      if (mode === 'model') {
-        r = (a.modelName || '').localeCompare(b.modelName || '');
-      } else if (mode === 'time') {
-        r = (a.mod || 0) - (b.mod || 0);
-      } else if (mode === 'text') {
-        r = (a.sfld || '').localeCompare(b.sfld || '');
-      } else {
-        // deck: group by first card's deck, then sort field
-        var da = (a.cards[0] && a.cards[0].deckName) || '—';
-        var db = (b.cards[0] && b.cards[0].deckName) || '—';
-        r = da.localeCompare(db);
-      }
-      // stable, meaningful tie-break for every mode
+      var da = (a.cards[0] && a.cards[0].deckName) || '—';
+      var db = (b.cards[0] && b.cards[0].deckName) || '—';
+      var r = da.localeCompare(db);
       if (!r) r = (a.sfld || '').localeCompare(b.sfld || '');
       if (!r) r = (a.id || 0) - (b.id || 0);
-      return r * dir;
+      return r;
     });
     return out;
   }
@@ -793,22 +835,26 @@
    *
    *     anki://x-callback-url/browser?search=<Anki search>
    *
-   * One gotcha is baked into AnkiDroid's handler (CardBrowserViewModel):
-   * a DeepLink search does NOT switch the browser to "all decks" — it runs
-   * inside the deck that was last selected in the Card Browser, so a bare
-   * `nid:<id>` reports "not found" whenever that note lives in a different
-   * deck. We therefore scope the search with the note's own deck:
+   * UPSTREAM LIMITATION (verified in AnkiDroid's CardBrowserViewModel +
+   * SearchRequest.toSearchString): for a URL deep link the browser installs
+   * the LAST-OPENED DECK as a structured filter and ANDs it with the search
+   * text — AND(deck:"<last deck>", our query) — and the URL protocol has no
+   * all-decks flag (only AnkiDroid's internal JS bridge does). So when the
+   * last-opened deck differs from this note's deck, AnkiDroid shows "no cards
+   * matched" until the user taps the deck selector → All decks; then the
+   * search re-runs and finds the note. We still send the deck-scoped term
    *
    *     deck:"Biology::Cell Division" nid:1004
    *
-   * Anki's search terms AND together, so this pins the result to exactly the
-   * note, regardless of which deck the browser was last in. AnkiMobile
-   * (2.0.90+) speaks `anki://x-callback-url/search?query=` and understands
-   * the same syntax. We navigate with the plain anki:// scheme — NEVER an
+   * because it is correct for AnkiMobile (2.0.90+,
+   * anki://x-callback-url/search?query=…), for AnkiDroid once the deck
+   * selector is on All decks, and for any future AnkiDroid that special-cases
+   * deep links — and the toast tells the user exactly what to do if AnkiDroid
+   * comes up empty. We navigate with the plain anki:// scheme — NEVER an
    * intent:// wrapper: an intent:// URL carries the package name, and Chrome
-   * bounces to the Play Store whenever no handler resolves, which is exactly
-   * the old bug. With a bare scheme, a missing client just does nothing —
-   * and a watchdog toast says what to paste instead.
+   * bounces to the Play Store whenever no handler resolves. With a bare
+   * scheme, a missing client just does nothing — and the watchdog toast says
+   * what to paste instead.
    */
 
   /** The Anki search term that isolates exactly this note. */
@@ -877,7 +923,7 @@
       }, { once: true });
     } catch (e) { /* older browsers */ }
 
-    toast('Opening ' + (deck ? deck + ' · ' : '') + 'note ' + note.id + ' (search term copied)');
+    toast('Opening ' + (deck ? deck + ' · ' : '') + 'note ' + note.id + ' — if AnkiDroid shows “no cards”, tap the deck name at the top → All decks', 4200);
     try { window.location.href = target; } catch (e) { /* scheme not handled */ }
     if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* noop */ } }
 
@@ -992,6 +1038,8 @@
       state.files = buildMediaMap(res.data.media);
       state.expanded = {};
       state.typeFilter = defaultTypeFilter();
+      state.modelFilter = {};
+      rebuildModelChips(); // note-type selectors follow the loaded deck
       state.fileName = fileName || '';
       state.fileSize = fileSize || 0;
       state.parseMs = Math.round(res.elapsed);
@@ -1203,24 +1251,29 @@
     renderNotes();
   });
 
-  ui.sort.addEventListener('change', function () {
-    state.sortMode = ui.sort.value;
-    renderNotes();
-  });
-
-  // direction toggle — flips whichever sort mode is active (↑ asc / ↓ desc)
-  if (ui.sortDir) {
-    ui.sortDir.addEventListener('click', function () {
-      state.sortDir = state.sortDir === 'desc' ? 'asc' : 'desc';
-      ui.sortDir.textContent = state.sortDir === 'desc' ? '↓' : '↑';
-      ui.sortDir.setAttribute('aria-label',
-        state.sortDir === 'desc' ? 'Sort descending' : 'Sort ascending');
-      ui.sortDir.title = state.sortDir === 'desc' ? 'Descending — tap for ascending' : 'Ascending — tap for descending';
-      renderNotes();
-    });
-  }
+  // (the sort dropdown + direction toggle were removed by design — the list
+  // keeps one stable, meaningful order and filtering does the rest)
 
   ui.errClose.addEventListener('click', function () { showErrorBox(false); });
+
+  /* ------------------------- move-to-top button ------------------------------ */
+  /* Appears once the list is scrolled past ~600px and glides the view back to
+     the top (and therefore back to the search bar) on tap. */
+  if (ui.toTop) {
+    var refreshToTop = function () {
+      var y = window.scrollY || window.pageYOffset || 0;
+      ui.toTop.classList.toggle('show', y > 600);
+    };
+    window.addEventListener('scroll', refreshToTop, { passive: true });
+    refreshToTop();
+    ui.toTop.addEventListener('click', function () {
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (e) {
+        window.scrollTo(0, 0);
+      }
+    });
+  }
 
   // (no "Open another" button: reloading/reopening the app returns to the
   // picker — one obvious way to load a different file, zero toolbar clutter)
@@ -1372,6 +1425,7 @@
     ankiSearchTerm: ankiSearchTerm,
     cardClass: cardClass,
     buildTypeBar: buildTypeBar,
+    rebuildModelChips: rebuildModelChips,
     drawIoShapes: drawIoShapes,
     renderClozes: renderClozes
   };

@@ -31,15 +31,18 @@
  * v6: cloze rendering + token search release; manifest share_target hardened
  *     (absolute action URL, .apkg/.colpkg extensions, split icon purposes)
  *     so Android lists the app in the share sheet.
+ * v7: note-type selectors above the card-state chips; sort controls removed;
+ *     token search limited to visible text + tags; bigger inline media;
+ *     move-to-top button.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v6';
+var VERSION = 'anki-inspector-v7';
 /*
  * Must match the ?v= suffixes in index.html and APP_VERSION in js/app.js —
  * a test asserts all three stay in lockstep. Bump on every release.
  */
-var ASSET_VER = '3.3.0';
+var ASSET_VER = '3.4.0';
 
 /* Files that change with every release. Served network-first so an already
  * open install can never keep running yesterday's code after an update. */

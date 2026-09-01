@@ -3,28 +3,27 @@
 Inspect Anki `.apkg` packages **entirely on-device**: WebAssembly SQLite, in-memory
 unzip, zero uploads, no server. Designed for phones and tablets.
 
-> **What's new in v3.3** — *cloze support*: `{{c1::answer}}` renders as
-> **`[answer]`**, each cloze number in its own colour (seeded golden-angle
-> palette — c1 is always the same colour, everywhere). The compact row now
-> shows **every** field, so no bit of note content is left out, and inline
-> images got one consistent, eye-comfortable size. Search is **token-based
-> (AND)** across fields, tags, note types *and* deck names, with live
-> `<mark>` highlighting of every match. The ✏️ pencil now scopes its AnkiDroid
-> search with `deck:"<deck>" nid:<id>` — AnkiDroid's deep link otherwise
-> searches whatever deck was last open and reports "not found". The Android
-> share sheet registration was hardened (absolute `share_target.action`,
-> `.apkg`/`.colpkg` extensions, split icon purposes). The toolbar scrolls away
-> with the page and the redundant "Open another" button is gone.
+> **What's new in v3.4** — **note-type selectors** (Basic / Cloze / Image
+> Occlusion / … built from the loaded deck, seeded colours) now sit **above**
+> the card-state selectors; the sort dropdown and direction toggle are **gone**
+> (one stable order — filtering decides what you see). Search now matches
+> **only the visible text of the fields plus tags** — note-type names, deck
+> names and HTML attribute noise (media filenames) no longer pollute results.
+> Inline media got bigger (116 px, capped at screen width), expanded media up
+> to 420 px, and a **↑ back-to-top button** appears after scrolling.
+>
+> **v3.3** — *cloze support*: `{{c1::answer}}` renders as **`[answer]`**, each
+> cloze number in its own colour (seeded golden-angle palette — c1 is always
+> the same colour, everywhere). The compact row shows **every** field, inline
+> images have one consistent size, search is token-based with live
+> `<mark>` highlighting, and the ✏️ pencil sends a deck-scoped search term.
 >
 > **v3.2** — *atomic self-updates*: every release pins its HTML/JS/CSS with
 > `?v=` and the service worker serves those files network-first, so an updated
-> app can never keep running a mix of the old and new release (that mix was
-> why the dismiss banner/dropzone stuck around and the pencil still went to
-> the Play Store after a deploy). Image-occlusion parsing speaks Anki's actual
-> grammar — `{{c1::image-occlusion:rect:…}}` with all coordinates normalized,
-> text font sizes as a fraction of the image height, and pre-release
-> pixel-coordinate notes auto-detected. The card-type chips sit above the sort
-> dropdown with a ↑/↓ direction button.
+> app can never keep running a mix of the old and new release. Image-occlusion
+> parsing speaks Anki's actual grammar — `{{c1::image-occlusion:rect:…}}` with
+> all coordinates normalized, text font sizes as a fraction of the image
+> height, and pre-release pixel-coordinate notes auto-detected.
 
 - **Web Share Target API v2** — share any `.apkg` straight from the share sheet.
   The manifest uses an **absolute** `share_target.action` (relative actions are
@@ -37,9 +36,15 @@ unzip, zero uploads, no server. Designed for phones and tablets.
   render as `[answer]` (inspector, not reviewer) with a deterministic
   per-ordinal colour (golden-angle hue walk); hover shows the cloze number and
   hint. `{{cN::image-occlusion:…}}` tokens are left to the occlusion renderer.
+- **Note-type + card-state selectors** — two chip rows: the note types found
+  in the loaded deck (Basic, Cloze, Image Occlusion, …) on top, then
+  New / Learning / Review / Suspended / Buried / No-cards below. Toggle any of
+  them to show/hide; Reset clears both rows. There is deliberately no sort
+  control — the list keeps one stable order (deck → sort field → id).
 - **Token-based smart search** — the query is split into tokens; a note
-  matches when **every** token matches somewhere in its fields, tags, note
-  type or deck names. All matches are highlighted live with `<mark>`.
+  matches when **every** token matches somewhere in its **visible field text
+  or tags** (note-type names, deck names and markup attributes are excluded),
+  and every match is highlighted live with `<mark>`.
 - **Complete compact rows** — the single-line preview joins *all* fields
   (separated by ·) and is never clamped: nothing in the note is left behind;
   inline media renders at one consistent size.
@@ -64,17 +69,19 @@ unzip, zero uploads, no server. Designed for phones and tablets.
   while formatting and inline SVGs are preserved; tap ▾ for full fields.
 - **Editor bridge** — the ✏️ button per note opens the installed client at that
   exact note with a **deck-scoped** search: `deck:"<deck name>" nid:<id>`
-  (AnkiDroid's deep link opens the Card Browser pre-filtered — verified
-  against AnkiDroid's `AndroidManifest.xml` intent filter, shipping since
-  v2.17, Aug 2022 — but it does *not* switch the browser to "all decks", so
-  without the `deck:` term the search runs in whatever deck was last open and
-  reports "not found"). AnkiMobile gets the same term via
-  `anki://x-callback-url/search?query=` (2.0.90+). The search term is copied
-  to the clipboard as a fallback, and if no app answers within ~2 s a toast
-  says what to paste. There is deliberately **no `intent://` wrapper and no
-  Play Store fallback URL** — an `intent://` link carries the package name and
-  Chrome bounces straight to the Store when nothing resolves it, which is
-  exactly the old bug.
+  (verified against AnkiDroid's `AndroidManifest.xml`, deep link shipping
+  since v2.17). Note an **upstream AnkiDroid limitation** (verified in
+  `CardBrowserViewModel` + `SearchRequest.toSearchString`): a URL deep link
+  ANDs your search with the *last-opened deck* as a structured filter and the
+  URL protocol has no all-decks flag — so if AnkiDroid's browser was last in
+  a different deck it shows "no cards matched" until you tap the deck
+  selector → **All decks** (the search then finds the note immediately; the
+  app's toast says exactly this). AnkiMobile (2.0.90+) gets the same term via
+  `anki://x-callback-url/search?query=`. The term is always copied to the
+  clipboard as a fallback, and if no app answers within ~2 s a toast says
+  what to paste. There is deliberately **no `intent://` wrapper and no Play
+  Store fallback URL** — an `intent://` link carries the package name and
+  Chrome bounces straight to the Store when nothing resolves it.
 - **Offline-capable + self-updating** — the service worker (v5) caches the app
   shell for offline use, checks for updates whenever the app becomes visible,
   and reloads itself once with a toast when a new version lands — no

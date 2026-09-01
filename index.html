@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <!-- ?v pins HTML, CSS and JS to one deploy so a half-updated service worker
        cache can never mix an old script with a new page (see sw.js: ASSET_VER) -->
-  <link rel="stylesheet" href="css/app.css?v=3.3.0">
+  <link rel="stylesheet" href="css/app.css?v=3.4.0">
 </head>
 <body>
   <header class="topbar">
@@ -86,22 +86,23 @@
 
   <main id="main" class="main" hidden>
     <div class="toolbar">
-      <!-- card-type visibility toggles sit ABOVE sorting: they decide WHAT is
-           shown; the sort row below only decides the ORDER of what's left -->
+      <!-- NOTE-TYPE selectors on top: Basic / Cloze / Image Occlusion / … are
+           built from the loaded deck and decide WHICH note types are visible.
+           Below them, the card-state selectors refine by card state. No sort
+           control by design — one stable order, filtering does the rest. -->
       <div id="type-bar" class="type-bar" hidden>
-        <span class="type-bar-label">Card types:</span>
-        <div id="type-chips" class="type-chips"></div>
-        <button id="type-reset" class="type-reset" type="button" hidden>Reset</button>
+        <div class="chip-row">
+          <span class="type-bar-label">Note types:</span>
+          <div id="model-chips" class="type-chips"></div>
+        </div>
+        <div class="chip-row">
+          <span class="type-bar-label">Card types:</span>
+          <div id="type-chips" class="type-chips"></div>
+          <button id="type-reset" class="type-reset" type="button" hidden>Reset</button>
+        </div>
       </div>
       <div class="toolbar-row">
-        <input id="search" class="search" type="search" placeholder="Search notes, fields, tags…" autocomplete="off">
-        <select id="sort" class="sort" title="Sort order">
-          <option value="deck">Sort: deck</option>
-          <option value="model">Sort: note type</option>
-          <option value="time">Sort: modified</option>
-          <option value="text">Sort: text</option>
-        </select>
-        <button id="sort-dir" class="sort-dir" type="button" title="Ascending — tap for descending" aria-label="Sort ascending">↑</button>
+        <input id="search" class="search" type="search" placeholder="Search notes, fields, tags… (space = AND)" autocomplete="off">
         <span id="count" class="count"></span>
       </div>
     </div>
@@ -109,13 +110,15 @@
     <ul id="note-list" class="note-list"></ul>
   </main>
 
+  <button id="to-top" class="to-top" type="button" title="Back to top" aria-label="Back to top">↑</button>
+
   <footer class="footer">
     <span>Anki Inspector <span id="version" class="version"></span> — client-side <code>.apkg</code> inspection · <a href="https://github.com/optimusprimenightfury/Anki-PWA" target="_blank" rel="noopener">source</a></span>
   </footer>
 
   <!-- parser core: shared by the worker and the UI (compact/sanitize helpers).
        Keep the ?v below in sync with ASSET_VER in sw.js and APP_VERSION in app.js -->
-  <script src="js/parser.js?v=3.3.0"></script>
-  <script src="js/app.js?v=3.3.0"></script>
+  <script src="js/parser.js?v=3.4.0"></script>
+  <script src="js/app.js?v=3.4.0"></script>
 </body>
 </html>
