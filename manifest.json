@@ -52,7 +52,7 @@
     }
   ],
   "share_target": {
-    "action": "https://optimusprimenightfury.github.io/Anki-PWA/",
+    "action": "https://optimusprimenightfury.github.io/Anki-PWA/share/",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {
@@ -65,6 +65,7 @@
           "accept": [
             ".apkg",
             ".colpkg",
+            ".zip",
             "application/octet-stream",
             "application/zip",
             "application/apkg",

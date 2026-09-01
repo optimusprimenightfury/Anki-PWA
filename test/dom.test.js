@@ -367,7 +367,14 @@ const fzstd = devRequire('fzstd');
     // share target hardened for the Android share sheet
     const mf = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
     assert.ok(/^https:\/\//.test(mf.share_target.action), 'share_target.action is an absolute URL');
+    assert.ok(mf.share_target.action.endsWith('/share/'), 'share_target.action is a distinct path (not the site root)');
     assert.ok(mf.share_target.params.files[0].accept.includes('.apkg'), 'accept includes the .apkg extension');
+    // the post-share redirect must stay INSIDE the app scope (origin-root
+    // redirects 404 on sub-path hosts like GitHub Pages)
+    assert.ok(
+      swSrc.includes("new URL('./?web-share-target&shared=' + key, self.registration.scope)"),
+      'share redirect resolves against the SW scope'
+    );
   }
 
   // ---- occlusion geometry: normalized vs pre-release pixel coordinates -------

@@ -34,15 +34,21 @@
  * v7: note-type selectors above the card-state chips; sort controls removed;
  *     token search limited to visible text + tags; bigger inline media;
  *     move-to-top button.
+ * v8: share-target reliability: share_target.action moved to a distinct
+ *     in-scope path /share/ (an action equal to the site root is a known
+ *     Chrome quirk that keeps the app off the share sheet), .zip accepted,
+ *     and the post-share redirect now resolves against registration.scope —
+ *     it previously bounced to the ORIGIN ROOT, i.e. outside the app on
+ *     sub-path hosts (GitHub Pages), 404-ing every shared file.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v7';
+var VERSION = 'anki-inspector-v8';
 /*
  * Must match the ?v= suffixes in index.html and APP_VERSION in js/app.js —
  * a test asserts all three stay in lockstep. Bump on every release.
  */
-var ASSET_VER = '3.4.0';
+var ASSET_VER = '3.5.0';
 
 /* Files that change with every release. Served network-first so an already
  * open install can never keep running yesterday's code after an update. */
@@ -144,11 +150,14 @@ self.addEventListener('fetch', function (event) {
 
         // Stash the file in Cache Storage under a unique key, then bounce the
         // browser to a URL the page can read it back from.
+        // NB: resolve against self.registration.scope (…/Anki-PWA/), NOT
+        // self.location.origin — the origin root is outside this app's scope
+        // and would 404 the whole share flow on GitHub Pages sub-path hosts.
         var key = 'shared-file-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
         var cache = await caches.open(VERSION + '-shared');
         await cache.put(key, new Response(file));
 
-        var target = new URL('./?web-share-target&shared=' + key, self.location.origin);
+        var target = new URL('./?web-share-target&shared=' + key, self.registration.scope);
         return Response.redirect(target.href, 302);
       })()
     );
@@ -265,6 +274,7 @@ self.addEventListener('message', function (event) {
     return;
   }
   if (event.data && event.data.type === 'SHARE_TARGET') {
-    event.respondWith(Response.redirect('./?url=' + encodeURIComponent(event.data.url), 302));
+    event.respondWith(Response.redirect(
+      new URL('./?url=' + encodeURIComponent(event.data.url), self.registration.scope).href, 302));
   }
 });

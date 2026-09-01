@@ -475,24 +475,25 @@ body { min-height: 100vh; }
 }
 .field-sep { color: var(--muted); opacity: 0.7; padding: 0 2px; }
 
-/* inline media gets ONE consistent, eye-comfortable size — independent of the
-   source resolution or aspect ratio, and never wider than the screen */
-.note-first img {
-  height: 116px;             /* same rendered size for every thumbnail */
-  width: auto;
-  max-width: 100%;
-  object-fit: contain;
-  vertical-align: middle;
-  border-radius: 10px;
-  margin: 0 6px;
-  background: var(--bg2);
-}
+/* inline media sizing — WIDTH-driven, per spec:
+   minima — every media item spans at least ~half the note width, so at most
+            two media items can sit side by side in a line;
+   maxima — never wider than the note card itself, so surrounding content is
+            never disrupted. Height follows the aspect ratio; the height cap
+            plus object-fit guards against a portrait image eating the screen. */
+.note-first img,
 .note-first svg {
-  height: 116px;
-  width: auto;
-  max-width: 100%;
+  display: inline-block;
   vertical-align: middle;
-  margin: 0 6px;
+  width: auto;
+  min-width: calc(50% - 10px);  /* minima: ~half the note width → ≤2 per line */
+  max-width: 100%;              /* maxima: at most the full note card */
+  height: auto;
+  max-height: 340px;
+  object-fit: contain;
+  border-radius: 10px;
+  margin: 4px 6px 4px 0;
+  background: var(--bg2);
 }
 .note-first audio, .extra-value audio { height: 28px; max-width: 200px; vertical-align: middle; }
 .note-first .empty { color: var(--muted); font-style: italic; }
@@ -553,6 +554,6 @@ mark.hl {
 @media (max-width: 520px) {
   .toolbar-row { flex-wrap: wrap; }
   .count { min-width: 0; }
-  .note-first img, .note-first svg { height: 96px; }
+  .note-first img, .note-first svg { min-width: calc(50% - 8px); max-height: 280px; }
   .type-bar-label { display: none; }
 }

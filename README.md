@@ -3,14 +3,21 @@
 Inspect Anki `.apkg` packages **entirely on-device**: WebAssembly SQLite, in-memory
 unzip, zero uploads, no server. Designed for phones and tablets.
 
-> **What's new in v3.4** — **note-type selectors** (Basic / Cloze / Image
-> Occlusion / … built from the loaded deck, seeded colours) now sit **above**
-> the card-state selectors; the sort dropdown and direction toggle are **gone**
-> (one stable order — filtering decides what you see). Search now matches
-> **only the visible text of the fields plus tags** — note-type names, deck
-> names and HTML attribute noise (media filenames) no longer pollute results.
-> Inline media got bigger (116 px, capped at screen width), expanded media up
-> to 420 px, and a **↑ back-to-top button** appears after scrolling.
+> **What's new in v3.5** — **share sheet, actually working**: the manifest's
+> `share_target.action` moved to a distinct in-scope path (`…/share/` — an
+> action equal to the site root is a known Chrome quirk that keeps the app off
+> the sheet), `.zip` is accepted, and a real bug was fixed where the service
+> worker redirected the shared file to the **origin root** — outside the app
+> on GitHub Pages — 404-ing every share that did get through. Manifest
+> changes are baked into the installed app, so after updating: launch once
+> (Chrome refreshes within ~a day) or remove + reinstall the icon.
+> Inline media is now **width-driven**: every item spans at least ~half the
+> note width (at most two per line) and never more than the note card.
+>
+> **v3.4** — **note-type selectors** (Basic / Cloze / Image Occlusion / … built
+> from the loaded deck, seeded colours) sit **above** the card-state
+> selectors; the sort dropdown and direction toggle are **gone**; search
+> matches only the visible text of the fields plus tags; ↑ back-to-top button.
 >
 > **v3.3** — *cloze support*: `{{c1::answer}}` renders as **`[answer]`**, each
 > cloze number in its own colour (seeded golden-angle palette — c1 is always
