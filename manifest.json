@@ -48,7 +48,10 @@
             "application/octet-stream",
             "application/zip",
             "application/apkg",
-            ".apkg"
+            "application/x-apkg",
+            "application/vnd.sqlite3",
+            "application/x-sqlite3",
+            "*/*"
           ]
         }
       ]

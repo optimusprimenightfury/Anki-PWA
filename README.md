@@ -86,6 +86,30 @@ Use the generated `test/sample.apkg` to try it out:
 
 Also supported: `?apkg=<url>` (iOS share extensions) and legacy GET share targets.
 
+## Share-sheet troubleshooting (Android)
+
+If **Anki Inspector** doesn't show up when you tap **Share** on a `.apkg`:
+
+1. **Install the app first.** Android only lists *installed* PWAs as share
+   targets — open the site in Chrome → **Install app** / menu → *Add to Home
+   screen*. The same steps are in the in-app help card on the landing screen.
+2. **Share the file itself.** Use the **Files** app (or *Downloads*):
+   long-press the `.apkg` → **Share** → Anki Inspector. Some apps share a text
+   link instead of a file — the app will tell you when that happens.
+3. **Give the WebAPK a minute.** Chrome refreshes installed web apps roughly
+   once a day, so the share entry can lag the install by a bit. Open the app
+   once, wait a minute, share again.
+4. **Force an update (Chromium only):** open `chrome://webapks`, find
+   *Anki Inspector*, tap **Update**. Last resort: uninstall and reinstall the
+   PWA.
+5. **Odd MIME types are covered.** File managers report `.apkg` as
+   `application/octet-stream`, `application/zip`, sqlite variants — the
+   manifest accept list covers all of them (plus `*/*`), so the app shows for
+   any file share.
+6. **App updates no longer need a reinstall.** Since service worker v2, the
+   shell is fetched network-first and assets refresh in the background, so a
+   deployed change appears on the next launch.
+
 ## Architecture
 
 ```

@@ -122,6 +122,33 @@ body { min-height: 100vh; }
 .dz-icon { opacity: 0.9; }
 .privacy-note { margin-top: 22px !important; font-size: 0.8rem !important; }
 
+/* ------------------------------ help card ------------------------------ */
+
+.help-card {
+  max-width: 560px;
+  margin: 0 auto 26px;
+  padding: 0 16px;
+}
+.help-card details {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.help-card summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.88rem;
+  list-style-position: inside;
+}
+.help-card summary code { background: var(--bg2); padding: 1px 6px; border-radius: 6px; color: var(--accent2); }
+.help-card ol { margin: 10px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.help-card ol code { background: var(--bg2); padding: 1px 6px; border-radius: 6px; color: var(--accent2); }
+.help-card .help-note { margin: 10px 0 0; font-size: 0.78rem; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 10px; line-height: 1.5; }
+
 /* --------------------------------- main -------------------------------- */
 
 .main { padding: 12px 16px 40px; max-width: 860px; margin: 0 auto; }
