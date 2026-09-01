@@ -20,7 +20,12 @@ const os = require('os');
 const { execFile, spawn } = require('child_process');
 
 const ROOT = __dirname;
-const PORT = parseInt(process.argv[process.argv.indexOf('--port') + 1] || '8080', 10);
+// NB: argv[indexOf('--port') + 1] resolves to argv[0] (the node binary) when the
+// flag is absent, which parseInt()s to NaN — guard for it so bare `npm start`
+// keeps its documented default port.
+const PORT = parseInt(
+  process.argv.includes('--port') ? process.argv[process.argv.indexOf('--port') + 1] : '8080', 10
+);
 const LAN = process.argv.includes('--lan');
 const TUNNEL = process.argv.includes('--tunnel');
 

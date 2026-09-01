@@ -30,6 +30,7 @@ function devRequire(rel) {
 }
 const initSqlJs = devRequire('sql.js/dist/sql-wasm.js');
 const fflate = devRequire('fflate');
+const fzstd = devRequire('fzstd');
 
 (async () => {
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
@@ -44,10 +45,14 @@ const fflate = devRequire('fflate');
   window.URL.createObjectURL = () => 'blob:mock-' + Math.random().toString(36).slice(2);
   window.URL.revokeObjectURL = () => {};
   window.HTMLElement.prototype.scrollIntoView = () => {};
+  if (typeof window.TextDecoder === 'undefined' && typeof TextDecoder !== 'undefined') {
+    window.TextDecoder = TextDecoder; // Node's — jsdom doesn't ship one
+  }
   window.matchMedia = window.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {} }));
 
   window.fflate = fflate;
   window.initSqlJs = initSqlJs;
+  window.fzstd = fzstd;
 
   // ---- load parser.js + app.js into the window --------------------------------
   window.eval(fs.readFileSync(path.join(ROOT, 'js', 'parser.js'), 'utf8'));
@@ -125,6 +130,19 @@ const fflate = devRequire('fflate');
   // pencil buttons exist
   assert.strictEqual(doc.querySelectorAll('.edit-btn').length, 3, '3 pencil buttons');
 
-  console.log('PASS — DOM wiring: render, blob-URL media, expand, search, sort, edit buttons');
+  // ---- 2) modern (2022+) package end-to-end: zstd DB + protobuf media --------
+  const mbuf = fs.readFileSync(path.join(ROOT, 'test', 'sample-modern.apkg'));
+  const mab = mbuf.buffer.slice(mbuf.byteOffset, mbuf.byteOffset + mbuf.byteLength);
+  await window.AnkiInspector.loadApkg(mab, 'modern.apkg', mab.byteLength);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(doc.querySelectorAll('.note').length, 3, 'modern: 3 notes rendered');
+  assert.ok(doc.querySelector('.model-badge').textContent === 'Basic+', 'modern: notetype from schema-18 tables');
+  const mstats = doc.querySelector('#stats').textContent;
+  assert.ok(mstats.includes('2022+'), 'modern: format label in stats: ' + mstats);
+
+  // version surfaced (self-update transparency)
+  assert.ok(window.AnkiInspector.version, 'app version exposed');
+
+  console.log('PASS — DOM wiring: render, blob-URL media, expand, search, sort, edit buttons + modern zstd/protobuf package');
   process.exit(0);
 })().catch((e) => { console.error('DOM TEST FAIL:', e); process.exit(1); });

@@ -11,9 +11,11 @@
 (function () {
   'use strict';
 
+  var APP_VERSION = '3.0.0';
+
   /* --------------------------------- state --------------------------------- */
 
-  var state = {
+    var state = {
     notes: [],
     cards: [],
     models: {},
@@ -27,6 +29,7 @@
     fileName: '',
     fileSize: 0,
     parseMs: 0,
+    format: '',           // human label of the parsed package format
     activeRequest: 0
   };
 
@@ -400,6 +403,7 @@
     var line = '📚 ' + n.toLocaleString() + ' notes · 🃏 ' + c.toLocaleString() + ' cards';
     if (m) line += ' · 🖼️ ' + m.toLocaleString() + ' media';
     line += ' · ⚡ parsed in ' + state.parseMs + ' ms';
+    if (state.format) line += ' · 📦 ' + state.format;
     ui.stats.textContent = line;
   }
 
@@ -426,6 +430,7 @@
       state.fileName = fileName || '';
       state.fileSize = fileSize || 0;
       state.parseMs = Math.round(res.elapsed);
+      state.format = (res.data && res.data.format && res.data.format.label) || '';
 
       ui.fileName.textContent = state.fileName + (state.fileSize ? '  (' + fmtBytes(state.fileSize) + ')' : '');
       ui.fileName.hidden = false;
@@ -513,7 +518,7 @@
       while (!it.done) {
         var val = it.value[1];
         if (typeof File !== 'undefined' && val instanceof File) {
-          if (/\.apkg$/i.test(val.name) || val.type.indexOf('apkg') !== -1 || val.type === 'application/octet-stream') {
+          if (PACKAGE_RE.test(val.name) || val.type.indexOf('apkg') !== -1 || val.type === 'application/octet-stream' || val.type === 'application/zip') {
             var buf = await val.arrayBuffer();
             var base = originBase();
             try {
@@ -597,10 +602,14 @@
   window.addEventListener('dragover', function (e) { e.preventDefault(); });
   window.addEventListener('drop', function (e) { e.preventDefault(); });
 
+  // Any Anki package flavour: .apkg (deck), .colpkg (whole collection) and
+  // raw .zip (same container, renamed by mail apps / download managers).
+  var PACKAGE_RE = /\.(apkg|colpkg|zip)$/i;
+
   function openFile(file) {
     if (!file) return;
-    if (!/\.apkg$/i.test(file.name)) {
-      showError('"' + file.name + '" does not look like an Anki package (.apkg).');
+    if (!PACKAGE_RE.test(file.name)) {
+      showError('"' + file.name + '" does not look like an Anki package — expected .apkg or .colpkg.');
       return;
     }
     var reader = new FileReader();
@@ -634,12 +643,51 @@
   $('#new-file').addEventListener('click', function () { ui.fileInput.click(); });
 
   /* ------------------------------ install prompt ---------------------------- */
+  /*
+   * The button must never nag someone who already has the app:
+   *  - inside the installed app (display-mode: standalone) it is pointless
+   *  - on the site, getInstalledRelatedApps() (manifest related_applications,
+   *    platform "webapp") lets us detect the installed WebAPK and stay quiet
+   */
+
+  function runningStandalone() {
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+      navigator.standalone === true;
+  }
+
+  function relatedAppInstalled() {
+    return Promise.resolve()
+      .then(function () {
+        if (!navigator.getInstalledRelatedApps) return [];
+        return navigator.getInstalledRelatedApps();
+      })
+      .then(function (apps) { return !!(apps && apps.length); })
+      .catch(function () { return false; });
+  }
 
   var deferredPrompt = null;
+  var installKnown = false; // set once we know the app is already installed
+
+  relatedAppInstalled().then(function (installed) {
+    installKnown = installed;
+    if (installed) ui.install.hidden = true;
+  });
+
+  if (runningStandalone()) {
+    installKnown = true;
+    ui.install.hidden = true;
+  }
+
   window.addEventListener('beforeinstallprompt', function (e) {
     e.preventDefault();
+    if (installKnown || runningStandalone()) return;
     deferredPrompt = e;
     ui.install.hidden = false;
+  });
+  window.addEventListener('appinstalled', function () {
+    installKnown = true;
+    deferredPrompt = null;
+    ui.install.hidden = true;
   });
   ui.install.addEventListener('click', function () {
     if (!deferredPrompt) return;
@@ -648,6 +696,53 @@
   });
 
   /* --------------------------- service worker ------------------------------ */
+  /*
+   * Self-updating: the SW is fetched network-first, so a deploy is picked up
+   * on the next launch automatically. To also refresh a session that is
+   * already open, we check for updates when the tab becomes visible and once
+   * an hour; when a new worker takes over, the page reloads itself once (with
+   * a small toast) — the user never has to reinstall anything.
+   */
+
+  var refreshing = false;
+
+  function showUpdateToast() {
+    var toast = document.createElement('div');
+    toast.className = 'update-toast';
+    toast.textContent = '🔄 Updated to v' + APP_VERSION + ' — refreshing…';
+    document.body.appendChild(toast);
+    setTimeout(function () { toast.classList.add('show'); }, 10);
+  }
+
+  function watchForUpdates(reg) {
+    if (reg.waiting && navigator.serviceWorker.controller) {
+      // an update finished downloading before this page noticed it
+      applyNow(reg.waiting);
+    }
+    reg.addEventListener('updatefound', function () {
+      var incoming = reg.installing;
+      if (!incoming) return;
+      incoming.addEventListener('statechange', function () {
+        if (incoming.state === 'installed' && navigator.serviceWorker.controller) {
+          applyNow(incoming);
+        }
+      });
+    });
+    // Re-check when the user comes back to the app, and hourly while open.
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { try { reg.update(); } catch (e) { /* noop */ } }
+    });
+    setInterval(function () { try { reg.update(); } catch (e) { /* noop */ } }, 60 * 60 * 1000);
+  }
+
+  function applyNow(worker) {
+    if (refreshing) return;
+    refreshing = true;
+    showUpdateToast();
+    try { worker.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { /* noop */ }
+    // skipWaiting may already have run during install — reload either way
+    setTimeout(function () { location.reload(); }, 1500);
+  }
 
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
@@ -658,7 +753,8 @@
     // relative path + scope so it also works when hosted under a sub-path
     // (e.g. GitHub Pages: /Anki-PWA/)
     navigator.serviceWorker.register('sw.js', { scope: './' }).then(function (reg) {
-      console.log('[anki-inspector] SW registered:', reg.scope);
+      console.log('[anki-inspector] SW v' + APP_VERSION + ' registered:', reg.scope);
+      watchForUpdates(reg);
     }).catch(function (err) {
       console.warn('[anki-inspector] SW registration failed:', err);
     });
@@ -675,6 +771,7 @@
   // expose a tiny API for tests / console debugging
   window.AnkiInspector = {
     _state: state,
+    version: APP_VERSION,
     fmtBytes: fmtBytes,
     fmtDate: fmtDate,
     renderNotes: renderNotes,
@@ -683,6 +780,8 @@
   };
 
   document.addEventListener('DOMContentLoaded', function () {
+    var vEl = document.getElementById('version');
+    if (vEl) vEl.textContent = 'v' + APP_VERSION;
     registerSW();
     handleShareTarget().catch(function (e) { showError(e.message || String(e)); });
   });

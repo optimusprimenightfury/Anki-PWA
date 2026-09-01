@@ -81,8 +81,34 @@ const workerCode = shim + '\n' + src;
   assert.strictEqual(res.data.cards.length, 3, '3 cards');
   assert.strictEqual(res.data.media.length, 2, '2 media');
   assert.strictEqual(res.data.media[0].bytes.constructor.name, 'Uint8Array', 'bytes transferred');
+  assert.strictEqual(res.data.format.version, 1, 'legacy1 format reported');
   assert.ok(res.elapsed >= 0, 'elapsed ms reported');
+
+  // second pass: the modern (2022+) package through the same worker pipeline —
+  // exercises fzstd.min.js via importScripts + zstd DB + protobuf media index
+  const done2 = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('worker timed out (modern)')), 30000);
+    const onMsg = (m) => {
+      if (m.type === 'result' && m.id === 43) { clearTimeout(timer); resolve(m); }
+      if (m.type === 'error' && m.id === 43) { clearTimeout(timer); reject(new Error(m.message)); }
+    };
+    w.on('message', onMsg);
+  });
+  const modernBuf = fs.readFileSync(path.join(__dirname, 'sample-modern.apkg'));
+  const modernAb = modernBuf.buffer.slice(modernBuf.byteOffset, modernBuf.byteOffset + modernBuf.byteLength);
+  w.postMessage({ type: 'parse', id: 43, buffer: modernAb }, [modernAb]);
+  const res2 = await done2;
+
+  assert.strictEqual(res2.id, 43, 'modern: echoes request id');
+  assert.strictEqual(res2.data.notes.length, 3, 'modern: 3 notes (dummy anki2 skipped)');
+  assert.strictEqual(res2.data.notes[0].modelName, 'Basic+', 'modern: notetype names from schema-18 tables');
+  assert.strictEqual(res2.data.notes[0].cards[0].deckName, 'Biology::Cell Division', 'modern: deck names from decks table');
+  assert.strictEqual(res2.data.media.length, 2, 'modern: 2 media via protobuf+zstd index');
+  assert.strictEqual(res2.data.media.find((m) => m.name === 'note.mp3').bytes.length, 18, 'modern: media zstd-decompressed');
+  assert.strictEqual(res2.data.format.version, 3, 'modern: format version 3');
+  assert.strictEqual(res2.data.format.compression, 'zstd', 'modern: zstd DB decoded');
+
   await w.terminate();
-  console.log('PASS — worker pipeline (importScripts + transferables) OK in %d ms', Math.round(res.elapsed));
+  console.log('PASS — worker pipeline (legacy + modern zstd/protobuf, importScripts + transferables) OK in %d ms', Math.round(res.elapsed));
   process.exit(0);
 })().catch((e) => { console.error('FAIL:', e); process.exit(1); });

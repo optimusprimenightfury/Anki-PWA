@@ -122,6 +122,60 @@ body { min-height: 100vh; }
 .dz-icon { opacity: 0.9; }
 .privacy-note { margin-top: 22px !important; font-size: 0.8rem !important; }
 
+/* ------------------------------ help card ------------------------------ */
+
+.help-card {
+  max-width: 560px;
+  margin: 0 auto 26px;
+  padding: 0 16px;
+}
+.help-card details {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.help-card summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.88rem;
+  list-style-position: inside;
+}
+.help-card summary code { background: var(--bg2); padding: 1px 6px; border-radius: 6px; color: var(--accent2); }
+.help-card ol { margin: 10px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.help-card ol code { background: var(--bg2); padding: 1px 6px; border-radius: 6px; color: var(--accent2); }
+.help-card .help-note { margin: 10px 0 0; font-size: 0.78rem; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 10px; line-height: 1.5; }
+
+.formats-note { margin-top: 4px !important; font-size: 0.75rem !important; }
+.formats-note code { background: var(--bg2); padding: 1px 6px; border-radius: 6px; color: var(--accent2); }
+
+.version { color: var(--accent); font-weight: 600; }
+
+/* ------------------------------ update toast ------------------------------ */
+
+.update-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 16px);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 99px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s, transform 0.3s;
+  z-index: 50;
+}
+.update-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
 /* --------------------------------- main -------------------------------- */
 
 .main { padding: 12px 16px 40px; max-width: 860px; margin: 0 auto; }

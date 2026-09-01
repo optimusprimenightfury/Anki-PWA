@@ -1,5 +1,5 @@
 /*!
- * Anki Inspector — service worker.
+ * Anki Inspector — service worker (v2).
  *
  * Handles two jobs:
  *  1. Web Share Target API v2: intercept the POST issued by the Android share
@@ -7,10 +7,20 @@
  *     page to a URL the page reads the blob from (works whether or not the
  *     app window was already open).
  *  2. App-shell caching so the inspector works fully offline once visited.
+ *
+ * v2 update strategy (fixes "pushes need uninstall/reinstall"):
+ *   - HTML navigations  → network-first: a freshly deployed index.html shows
+ *     up on the very next launch; the cached copy is only an offline fallback.
+ *   - static assets     → stale-while-revalidate: served instantly from cache,
+ *     refreshed in the background so the next load is current.
+ *   - the v1 cache self-invalidates: bumping VERSION makes the activate step
+ *     delete every cache that is not current (old shell + stale shared blobs),
+ *     so existing installs migrate without any user action.
+ * v3: answers SKIP_WAITING so the page can apply an update immediately.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v1';
+var VERSION = 'anki-inspector-v3';
 var SHELL = [
   './',
   './index.html',
@@ -20,6 +30,7 @@ var SHELL = [
   './js/parser.js',
   './js/worker.js',
   './js/fflate.min.js',
+  './js/fzstd.min.js',
   './js/sql-wasm.js',
   './js/sql-wasm.wasm',
   './icons/icon.svg',
@@ -35,6 +46,8 @@ self.addEventListener('install', function (event) {
   );
 });
 
+// Activating v2 deletes every cache that is not v2 — this is what wipes the
+// stale v1 shell (self-invalidation) and any leftover shared-file blobs.
 self.addEventListener('activate', function (event) {
   var KEEP = [VERSION, VERSION + '-shared'];
   event.waitUntil(
@@ -102,10 +115,42 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  /* ---- 2) GET ------------------------------------------------------------- */
+  if (method !== 'GET') return;
+
+  /* ---- 2) HTML navigations: network-first ---------------------------------- */
+  // The freshly deployed shell must appear WITHOUT uninstall/reinstall, so the
+  // network wins whenever it is reachable; cache is the offline fallback.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      (async function () {
+        try {
+          var fresh = await fetch(event.request);
+          if (fresh && fresh.ok) {
+            var copy = fresh.clone();
+            var shellCache = await caches.open(VERSION);
+            event.waitUntil(shellCache.put('./index.html', copy));
+          }
+          return fresh;
+        } catch (err) {
+          var cached = await caches.match(event.request, { ignoreSearch: true });
+          if (cached) return cached;
+          cached = await caches.match('./index.html');
+          if (cached) return cached;
+          return htmlResponse(
+            '<!doctype html><meta charset="utf-8"><title>Offline</title>' +
+            '<h1>You are offline</h1><p>Reconnect once to finish installing ' +
+            'Anki Inspector, then it works fully offline.</p>' +
+            '<a href="./">Try again</a>', 503);
+        }
+      })()
+    );
+    return;
+  }
+
+  /* ---- 3) everything else (GET assets): stale-while-revalidate ------------- */
   event.respondWith(
     (async function () {
-      // 2a) the page asks for the stashed shared file back
+      // 3a) the page asks for the stashed shared file back
       var sharedKey = url.searchParams.get('fetch-shared');
       if (sharedKey) {
         var cache2 = await caches.open(VERSION + '-shared');
@@ -118,10 +163,21 @@ self.addEventListener('fetch', function (event) {
         return htmlResponse('Shared file no longer available (already consumed or expired).', 404);
       }
 
-      // 2b) app shell: cache-first, network fallback
+      // 3b) serve from cache immediately…
       var cached = await caches.match(event.request);
-      if (cached) return cached;
+      if (cached) {
+        // …and refresh the copy in the background for the next load.
+        event.waitUntil(
+          fetch(event.request).then(function (res) {
+            if (res && res.ok && res.type === 'basic') {
+              return caches.open(VERSION).then(function (c) { return c.put(event.request, res); });
+            }
+          }).catch(function () { /* offline — keep the stale copy */ })
+        );
+        return cached;
+      }
 
+      // 3c) nothing cached: go to the network, cache a good copy.
       var res = await fetch(event.request);
       if (res && res.ok && res.type === 'basic') {
         var copy = res.clone();
@@ -135,8 +191,12 @@ self.addEventListener('fetch', function (event) {
   );
 });
 
-/* ---- 3) legacy Web Share Target v1 (GET) — kept for older clients ---------- */
+/* ---- 4) page asks us to apply a waiting update immediately ---------------- */
 self.addEventListener('message', function (event) {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
   if (event.data && event.data.type === 'SHARE_TARGET') {
     event.respondWith(Response.redirect('./?url=' + encodeURIComponent(event.data.url), 302));
   }
