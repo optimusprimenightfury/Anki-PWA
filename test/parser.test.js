@@ -134,22 +134,40 @@ function assertSameDeck(res, label) {
   const shapes = AnkiParser.parseOcclusionShapes(ioNote.fields[1]);
   assert.strictEqual(shapes.length, 4, 'IO: 4 shapes parsed');
   assert.deepStrictEqual(shapes.map((s) => s.shape), ['rect', 'ellipse', 'polygon', 'text'], 'IO: shape kinds');
-  assert.deepStrictEqual(shapes.map((s) => s.ordinal), [1, 1, 2, 3], 'IO: cloze ordinals');
+  assert.deepStrictEqual(shapes.map((s) => s.ordinal), [1, 2, 2, 0], 'IO: cloze ordinals (text = c0)');
   assert.strictEqual(shapes[0].props.left, '.2', 'IO: rect left prop');
-  assert.strictEqual(shapes[0].props.oi, '0', 'IO: occlude-inactive prop');
+  assert.strictEqual(shapes[0].props.oi, '1', 'IO: occlude-inactive prop');
   assert.strictEqual(shapes[1].props.rx, '.12', 'IO: ellipse rx prop');
+  assert.strictEqual(shapes[1].props.angle, '2500', 'IO: stored angle prop');
   assert.strictEqual(shapes[3].props.text, 'Nucleus', 'IO: text label prop');
-  assert.strictEqual(shapes[3].props.fs, '24', 'IO: text font size prop');
+  assert.strictEqual(shapes[3].props.fs, '.05', 'IO: normalized font size prop');
+
+  // the marker-free grammar older ports/add-ons wrote still parses
+  const legacy = AnkiParser.parseOcclusionShapes(
+    '{{c1::rect:left=.2:top=.25:width=.35:height=.15:oi=0}} {{c1::ellipse:left=.6:top=.3:rx=.12:ry=.12}}');
+  assert.strictEqual(legacy.length, 2, 'IO: legacy marker-free tokens parsed');
+  assert.deepStrictEqual(legacy.map((s) => s.ordinal), [1, 1], 'IO: legacy ordinals');
 
   // escapes: Anki's grammar allows \: and \\ inside values
-  const esc = AnkiParser.parseOcclusionShapes('{{c1::text:text=a\\:b\\\\c:left=.5}}');
+  const esc = AnkiParser.parseOcclusionShapes('{{c1::image-occlusion:text:text=a\\:b\\\\c:left=.5}}');
   assert.strictEqual(esc.length, 1, 'IO: escaped token parsed');
   assert.strictEqual(esc[0].props.text, 'a:b\\c', 'IO: escapes unfolded');
 
-  // bare (un-cloze-wrapped) tokens are treated as ordinal 0
-  const bare = AnkiParser.parseOcclusionShapes('rect:left=.1:top=.2:width=.3:height=.4');
-  assert.strictEqual(bare.length, 1, 'IO: bare token parsed');
+  // bare (un-cloze-wrapped) tokens are treated as ordinal 0 — with and
+  // without the image-occlusion: marker
+  const bare = AnkiParser.parseOcclusionShapes('image-occlusion:rect:left=.1:top=.2:width=.3:height=.4 rect:left=.5:top=.2:width=.1:height=.1');
+  assert.strictEqual(bare.length, 2, 'IO: bare tokens parsed');
   assert.strictEqual(bare[0].ordinal, 0, 'IO: bare token ordinal 0');
+
+  // a single real-grammar token is enough to recognise an Occlusions field
+  assert.ok(
+    AnkiParser.detectImageOcclusion(
+      ['<img src="a.png">', '{{c1::image-occlusion:rect:top=.1:left=.23:width=.4:height=.5}}', '', ''],
+      ['Image', 'Occlusions', 'Header', 'Back Extra'],
+      'Image Occlusion'
+    ),
+    'single image-occlusion token detected'
+  );
 
   // legacy Image Occlusion Enhanced: literal <svg> masks field
   const legacyDet = AnkiParser.detectImageOcclusion(

@@ -126,7 +126,14 @@ const NOTES = [
     id: 1004, guid: '0a1b2c3d', mid: 1700000000003, tags: 'biology histology', mod: 1690002200,
     flds: [
       '<img src="cell-diagram.png">',
-      '{{c1::rect:left=.2:top=.25:width=.35:height=.15:oi=0}} {{c1::ellipse:left=.6:top=.3:rx=.12:ry=.12}} {{c2::polygon:points=.15,.7 .4,.85 .2,1}} {{c3::text:text=Nucleus:left=.05:top=.05:fs=24}}',
+      // the EXACT grammar Anki 23.10+/AnkiDroid 2.20+ serialize
+      // (ts/routes/image-occlusion/shapes/to-cloze.ts): every token is
+      // <br>-separated, carries the image-occlusion: marker, coordinates are
+      // normalized 0..1 — text `fs` normalized to the image HEIGHT, ordinal 0
+      '{{c1::image-occlusion:rect:top=.25:left=.2:width=.35:height=.15:oi=1}}<br>' +
+      '{{c2::image-occlusion:ellipse:top=.3:left=.6:rx=.12:ry=.18:angle=2500}}<br>' +
+      '{{c2::image-occlusion:polygon:left=.15:top=.7:points=.15,.7 .4,.85 .2,1}}<br>' +
+      '{{c0::image-occlusion:text:left=.05:top=.05:text=Nucleus:scale=1.:fs=.05}}',
       'Label the cell organelles',
       'Chapter 3 — cell biology'
     ]

@@ -9,7 +9,9 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/app.css">
+  <!-- ?v pins HTML, CSS and JS to one deploy so a half-updated service worker
+       cache can never mix an old script with a new page (see sw.js: ASSET_VER) -->
+  <link rel="stylesheet" href="css/app.css?v=3.4.0">
 </head>
 <body>
   <header class="topbar">
@@ -19,7 +21,6 @@
     </div>
     <div class="topbar-right">
       <span id="file-name" class="file-name" hidden></span>
-      <button id="new-file" class="btn" hidden>Open another</button>
       <button id="install" class="btn primary" hidden>Install app</button>
     </div>
   </header>
@@ -37,7 +38,7 @@
     <button id="error-close" class="btn ghost" type="button">Dismiss</button>
   </section>
 
-  <main id="dropzone" class="dropzone">
+  <section id="dropzone" class="dropzone">
     <div class="dropzone-inner">
       <div class="dz-icon" aria-hidden="true">
         <svg viewBox="0 0 48 48" width="72" height="72">
@@ -53,7 +54,7 @@
       <button class="btn primary" id="dz-btn" type="button">Choose file</button>
     </div>
     <p class="privacy-note">🔒 100% on-device — the package is parsed by WebAssembly in your browser and never uploaded.</p>
-  </main>
+  </section>
 
   <section id="help-card" class="help-card" aria-label="How to open a .apkg on Android">
     <details>
@@ -64,9 +65,15 @@
         <li>Pick <strong>Anki Inspector</strong> — the deck opens by itself.</li>
       </ol>
       <p class="help-note">
-        Not listed? Chrome can take a minute (or up to a day) to refresh installed
-        web apps — open the app once, then share again. Meanwhile, <em>Choose file</em>
-        above always works, including from inside AnkiDroid’s export dialog.
+        Not in the list? ① Some phones (Xiaomi/MIUI, Samsung One UI at times)
+        hide web apps behind <strong>⋮ More</strong> / <em>“Android Share”</em>
+        in the sheet — look there first. ② Chrome re-reads the share
+        registration when the app launches, then roughly daily — open the
+        installed app once, wait a bit, share again. ③ Still nothing? Remove
+        the home-screen icon and tap <strong>Install app</strong> once more —
+        Android caches share-sheet registration aggressively. Meanwhile,
+        <em>Choose file</em> above always works, including from inside
+        AnkiDroid’s export dialog.
       </p>
       <p class="help-note">
         A deck that only shows a <em>“Please update to the latest Anki version”</em>
@@ -79,32 +86,39 @@
 
   <main id="main" class="main" hidden>
     <div class="toolbar">
-      <div class="toolbar-row">
-        <input id="search" class="search" type="search" placeholder="Search notes, fields, tags…" autocomplete="off">
-        <select id="sort" class="sort" title="Sort order">
-          <option value="deck">Sort: deck</option>
-          <option value="model">Sort: note type</option>
-          <option value="time">Sort: modified</option>
-          <option value="text">Sort: text</option>
-        </select>
-        <span id="count" class="count"></span>
-      </div>
+      <!-- NOTE-TYPE selectors on top: Basic / Cloze / Image Occlusion / … are
+           built from the loaded deck and decide WHICH note types are visible.
+           Below them, the card-state selectors refine by card state. No sort
+           control by design — one stable order, filtering does the rest. -->
       <div id="type-bar" class="type-bar" hidden>
-        <span class="type-bar-label">Card types:</span>
-        <div id="type-chips" class="type-chips"></div>
-        <button id="type-reset" class="type-reset" type="button" hidden>Reset</button>
+        <div class="chip-row">
+          <span class="type-bar-label">Note types:</span>
+          <div id="model-chips" class="type-chips"></div>
+        </div>
+        <div class="chip-row">
+          <span class="type-bar-label">Card types:</span>
+          <div id="type-chips" class="type-chips"></div>
+          <button id="type-reset" class="type-reset" type="button" hidden>Reset</button>
+        </div>
+      </div>
+      <div class="toolbar-row">
+        <input id="search" class="search" type="search" placeholder="Search notes, fields, tags… (space = AND)" autocomplete="off">
+        <span id="count" class="count"></span>
       </div>
     </div>
     <p id="stats" class="stats"></p>
     <ul id="note-list" class="note-list"></ul>
   </main>
 
+  <button id="to-top" class="to-top" type="button" title="Back to top" aria-label="Back to top">↑</button>
+
   <footer class="footer">
     <span>Anki Inspector <span id="version" class="version"></span> — client-side <code>.apkg</code> inspection · <a href="https://github.com/optimusprimenightfury/Anki-PWA" target="_blank" rel="noopener">source</a></span>
   </footer>
 
-  <!-- parser core: shared by the worker and the UI (compact/sanitize helpers) -->
-  <script src="js/parser.js"></script>
-  <script src="js/app.js"></script>
+  <!-- parser core: shared by the worker and the UI (compact/sanitize helpers).
+       Keep the ?v below in sync with ASSET_VER in sw.js and APP_VERSION in app.js -->
+  <script src="js/parser.js?v=3.4.0"></script>
+  <script src="js/app.js?v=3.4.0"></script>
 </body>
 </html>

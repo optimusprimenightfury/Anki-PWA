@@ -227,21 +227,36 @@
   /*
    * Anki 23.10+/AnkiDroid 2.20+ "Image Occlusion" notes keep the base image in
    * one field and the masks in an "Occlusions" field as CLOZE-WRAPPED text
-   * tokens (this is the exact grammar of Anki's own imageocclusion.rs):
+   * tokens. This is the exact grammar of Anki's own serializer
+   * (ts/routes/image-occlusion/shapes/*.ts — one <br>-separated token per
+   * shape, each property colon-separated, values escaped with \: and \\):
    *
-   *   {{c1::rect:left=.2325:top=.3261:width=.202:height=.0975:oi=1}}
-   *   {{c2::ellipse:left=.55:top=.5:rx=.12:ry=.18}}
-   *   {{c1::polygon:points=.1,.8 .35,.95 .15,1}}
-   *   {{c3::text:text=Label\:x:left=.05:top=.05:fs=24}}
+   *   {{c1::image-occlusion:rect:top=.25:left=.2:width=.35:height=.15:oi=1}}<br>
+   *   {{c2::image-occlusion:ellipse:top=.3:left=.55:rx=.12:ry=.18:angle=2500}}<br>
+   *   {{c2::image-occlusion:polygon:left=.1:top=.8:points=.1,.8 .35,.95 .15,1}}<br>
+   *   {{c0::image-occlusion:text:left=.05:top=.05:text=Label\:x:scale=1.:fs=.05}}
    *
    * All coordinates are NORMALIZED (0..1) fractions of the image size, so they
-   * can be drawn over the image at any rendered size. `angle` is stored in
-   * 1/10000-of-a-turn steps (360deg = 10000). The legacy "Image Occlusion
-   * Enhanced" add-on instead stores literal <svg> markup with pixel geometry.
+   * can be drawn over the image at any rendered size — including the text
+   * font size `fs`, which is a fraction of the image HEIGHT. `angle` is stored
+   * in 1/10000-of-a-turn steps (360deg = 10000). Early/add-on ports wrote the
+   * same tokens without the `image-occlusion:` marker, or (rare, pre-release)
+   * with ABSOLUTE PIXEL values — the renderer detects >1 values and treats
+   * them as pixels. The legacy "Image Occlusion Enhanced" add-on instead
+   * stores literal <svg> markup with pixel geometry.
    */
 
   var OCCLUSION_CLOZE_RE = /\{\{c(\d+)::\s*([^\}]*(?:\}(?!\})[^\}]*)*)\}\}/gi;
-  var OCCLUSION_BARE_RE = /(?:^|[\s>])((?:rect|ellipse|polygon|text):(?:[^\s<>]|\\ )*)/gi;
+  /*
+   * Two generations of the mask grammar exist in the wild:
+   *   2013–2023 (add-on / early ports):  {{c1::rect:left=.2:top=.3}}
+   *   Anki 23.10+ / AnkiDroid 2.20+ :    {{c1::image-occlusion:rect:top=.1:left=.23}}
+   * The `image-occlusion:` marker is emitted by Anki's own serializer
+   * (ts/routes/image-occlusion/shapes/to-cloze.ts) and must be accepted in
+   * both the cloze-wrapped and the bare form.
+   */
+  var OCCLUSION_PREFIX = 'image-occlusion:';
+  var OCCLUSION_BARE_RE = /(?:^|[\s>])((?:image-occlusion:)?(?:rect|ellipse|polygon|text):(?:[^\s<>]|\\ )*)/gi;
   var OCCLUSION_SHAPE_KINDS = { rect: 1, ellipse: 1, polygon: 1, text: 1 };
 
   /** Split "a:1:b:2" on ':' honouring Anki's `\:` and `\\` escapes. */
@@ -263,8 +278,9 @@
     return parts;
   }
 
-  /** "rect:left=.2:top=.3" -> { shape:'rect', props:{left:'.2', top:'.3'} } */
+  /** "image-occlusion:rect:left=.2:top=.3" -> { shape:'rect', props:{left:'.2', top:'.3'} } */
   function parseOcclusionToken(token) {
+    token = String(token).replace(/^image-occlusion:/i, '');
     var idx = token.indexOf(':');
     if (idx < 1) return null;
     var shape = token.slice(0, idx).trim().toLowerCase();
@@ -305,7 +321,10 @@
   /** Is this bare text distinctive enough to be an Occlusions field? */
   function looksLikeOcclusionText(field) {
     var f = String(field || '');
-    if (/\{\{c\d+::\s*(?:rect|ellipse|polygon|text):/i.test(f)) return true;
+    // the explicit marker written by Anki 23.10+ / AnkiDroid 2.20+ is a sure
+    // signal on its own, even when only a single shape is present
+    if (/image-occlusion:(rect|ellipse|polygon|text):/i.test(f)) return true;
+    if (/\{\{c\d+::\s*(?:image-occlusion:)?(?:rect|ellipse|polygon|text):/i.test(f)) return true;
     OCCLUSION_BARE_RE.lastIndex = 0;
     var bare = f.replace(/<[^>]+>/g, ' ').match(OCCLUSION_BARE_RE);
     return !!(bare && bare.length >= 2);

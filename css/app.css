@@ -186,14 +186,12 @@ body { min-height: 100vh; }
 .main { padding: 12px 16px 40px; max-width: 860px; margin: 0 auto; }
 
 .toolbar {
-  position: sticky;
-  top: 56px;
-  z-index: 15;
+  /* deliberately NOT sticky: on scroll the search bar, chips and sort row
+     glide off-screen and take no space — the page belongs to the notes */
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px 0 12px;
-  background: linear-gradient(var(--bg) 80%, transparent);
 }
 .toolbar-row { display: flex; gap: 10px; align-items: center; }
 .search {
@@ -208,21 +206,45 @@ body { min-height: 100vh; }
   outline: none;
 }
 .search:focus { border-color: var(--accent); }
-.sort {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 10px 8px;
-  font-size: 0.85rem;
-}
+/* (the sort dropdown + direction toggle styles were removed with the controls) */
 .count { color: var(--muted); font-size: 0.8rem; white-space: nowrap; min-width: 60px; text-align: right; }
+
+/* ------------------------------ move-to-top ------------------------------ */
+
+.to-top {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 40;
+}
+.to-top.show { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.to-top:active { transform: scale(0.94); }
 
 .stats { color: var(--muted); font-size: 0.8rem; margin: 0 0 10px; }
 
-/* ----------------------- card-type toggle chips ------------------------- */
+/* ----------------------- note-type / card-type chips --------------------- */
 
 .type-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chip-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -443,32 +465,54 @@ body { min-height: 100vh; }
 .model-badge { background: rgba(91, 140, 255, 0.16); color: #9db9ff; }
 .tag-badge { background: rgba(126, 240, 200, 0.12); color: var(--accent2); }
 
-/* compact single-line front field */
+/* compact preview line — every field joined, never clamped: no content left
+   behind. Grows as tall as the note needs. */
 .note-first {
   font-size: 0.98rem;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--text);
   word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
-.note-first img, .extra-value img {
-  max-width: 48px;
-  max-height: 48px;
-  vertical-align: middle;
-  border-radius: 6px;
-  margin: 0 4px;
+.field-sep { color: var(--muted); opacity: 0.7; padding: 0 2px; }
+
+/* inline media gets ONE consistent, eye-comfortable size — independent of the
+   source resolution or aspect ratio, and never wider than the screen */
+.note-first img {
+  height: 116px;             /* same rendered size for every thumbnail */
+  width: auto;
+  max-width: 100%;
   object-fit: contain;
-}
-.note-first svg, .extra-value svg {
-  max-width: 48px;
-  max-height: 48px;
   vertical-align: middle;
+  border-radius: 10px;
+  margin: 0 6px;
+  background: var(--bg2);
+}
+.note-first svg {
+  height: 116px;
+  width: auto;
+  max-width: 100%;
+  vertical-align: middle;
+  margin: 0 6px;
 }
 .note-first audio, .extra-value audio { height: 28px; max-width: 200px; vertical-align: middle; }
 .note-first .empty { color: var(--muted); font-style: italic; }
+
+/* cloze deletions: [answer] with a per-ordinal seeded colour (inline style
+   carries the hue — see clozeColor() in app.js) */
+.cloze {
+  font-weight: 600;
+  padding: 0 3px;
+  border-radius: 5px;
+  cursor: help; /* shows the cloze number + hint from the title attribute */
+}
+
+/* live search match highlighting */
+mark.hl {
+  background: rgba(91, 140, 255, 0.38);
+  color: #fff;
+  border-radius: 4px;
+  padding: 0 2px;
+}
 
 .note-cards { display: flex; flex-wrap: wrap; gap: 5px; }
 .note-extra { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); display: flex; flex-direction: column; gap: 6px; }
@@ -502,14 +546,13 @@ body { min-height: 100vh; }
 .footer a { color: var(--accent); }
 
 /* media in expanded view */
-.extra-value img { max-width: 100%; max-height: 220px; }
+.extra-value img { max-width: 100%; max-height: 420px; object-fit: contain; }
+.extra-value svg { max-width: 100%; max-height: 420px; }
 .extra-value audio { height: 32px; width: min(260px, 100%); }
 
 @media (max-width: 520px) {
-  .toolbar { top: 50px; }
   .toolbar-row { flex-wrap: wrap; }
   .count { min-width: 0; }
-  .sort { flex: 0 0 auto; }
-  .note-first img, .note-first svg { max-width: 36px; max-height: 36px; }
+  .note-first img, .note-first svg { height: 96px; }
   .type-bar-label { display: none; }
 }

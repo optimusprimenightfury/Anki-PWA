@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '3.1.0';
+  var APP_VERSION = '3.4.0';
 
   /* --------------------------------- state --------------------------------- */
 
@@ -23,9 +23,9 @@
     mediaMap: {},
     media: [],
     files: {},            // "filename.jpg" -> { url, type, bytes } (blob URL)
-    sortMode: 'deck',     // 'deck' | 'model' | 'time' | 'text'
     filter: '',           // live search text
-    typeFilter: defaultTypeFilter(), // card-type visibility toggles (chips)
+    typeFilter: defaultTypeFilter(), // card-state visibility toggles (chips)
+    modelFilter: {},      // note-type visibility toggles (chips) — {} = all on
     expanded: {},         // noteId -> bool (shows full fields)
     fileName: '',
     fileSize: 0,
@@ -56,10 +56,10 @@
     list: $('#note-list'),
     stats: $('#stats'),
     search: $('#search'),
-    sort: $('#sort'),
     count: $('#count'),
     typeBar: $('#type-bar'),
     typeChips: $('#type-chips'),
+    modelChips: $('#model-chips'),
     typeReset: $('#type-reset'),
     helpCard: $('#help-card'),
     bar: $('#progress-bar'),
@@ -70,7 +70,8 @@
     errClose: $('#error-close'),
     fileName: $('#file-name'),
     install: $('#install'),
-    spinner: $('#spinner')
+    spinner: $('#spinner'),
+    toTop: $('#to-top')
   };
 
   /* ------------------------------ url plumbing ------------------------------ */
@@ -154,6 +155,45 @@
     return /<img\b|<audio\b|<video\b|<svg\b|\[sound:/i.test(html);
   }
 
+  /* ------------------------------ cloze rendering --------------------------- */
+
+  /*
+   * Cloze deletions — {{c1::answer}} / {{c1::answer::hint}} / {{c1::}} — are
+   * rendered with the ANSWER visible as [answer] (this is an inspector, not a
+   * reviewer). Every ordinal gets its own colour from a seeded golden-angle
+   * walk around the hue wheel: consecutive cloze numbers always sit far apart
+   * on the wheel, and cN maps to the same colour in every note, every deck,
+   * every reload — no randomness.
+   *
+   * {{cN::image-occlusion:…}} tokens are NOT text clozes; they are left alone
+   * (the occlusion preview draws them).
+   */
+  function clozeColor(ord) {
+    var n = parseInt(ord, 10) || 0;
+    var hue = (n * 137.508) % 360;
+    return {
+      color: 'hsl(' + hue.toFixed(1) + ', 80%, 66%)',
+      bg: 'hsla(' + hue.toFixed(1) + ', 80%, 60%, 0.15)'
+    };
+  }
+
+  function renderClozes(html) {
+    if (!html || html.indexOf('{{c') === -1) return html;
+    return String(html).replace(/\{\{c(\d+)::([\s\S]*?)\}\}/g, function (whole, ord, body) {
+      if (/^\s*image-occlusion:/i.test(body)) return whole;
+      var seg = String(body).split('::');
+      var answer = seg.shift();
+      var hint = seg.join('::');
+      var n = parseInt(ord, 10) || 0;
+      var c = clozeColor(n);
+      var label = answer ? '[' + answer + ']' : '[…]';
+      var title = 'cloze c' + n + (hint ? ' · hint: ' + hint.replace(/"/g, '') : '');
+      return '<span class="cloze" data-ord="' + n + '" title="' + title +
+        '" style="color:' + c.color + ';background:' + c.bg +
+        ';border-bottom:1px dashed ' + c.color + '">' + label + '</span>';
+    });
+  }
+
   /* --------------------------- rendering: notes ---------------------------- */
 
   function fieldPreview(field) {
@@ -195,6 +235,10 @@
    * are normalized (0..1). Initially we draw in a 0..1 viewBox that stretches
    * with the image; once the image has loaded we redraw in absolute pixels
    * (viewBox = natural size) so text masks get real font sizes.
+   *
+   * Values may also arrive in ABSOLUTE PIXELS (>1) from pre-release IO ports —
+   * when the real image size is known we detect that per shape and use the
+   * numbers as-is instead of scaling.
    */
   function drawIoShapes(svg, shapes, size) {
     var W = size ? size.width : 1;
@@ -206,18 +250,38 @@
 
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
+    /** normalized fraction → px, or a pre-release pixel value as-is. */
+    function coord(v, total, pixelShape) {
+      var n = num(v);
+      if (pixelShape) return n;              // already absolute pixels
+      return n * total;                      // normalized 0..1 → px
+    }
+    /** Does any geometry number in this shape exceed 1 (= surely pixels)? */
+    function isPixelShape(shape, p) {
+      if (!size) return false;               // only decidable with the real size
+      var vals = [p.left, p.top, p.width, p.height, p.rx, p.ry];
+      if (shape === 'polygon') {
+        String(p.points || '').split(/[\s,]+/).forEach(function (n) { vals.push(n); });
+      }
+      for (var i = 0; i < vals.length; i++) {
+        if (Math.abs(num(vals[i])) > 1.02) return true;
+      }
+      return false;
+    }
+
     shapes.forEach(function (s) {
       var p = s.props || {};
-      var left = num(p.left) * W, top = num(p.top) * H;
+      var px = isPixelShape(s.shape, p);
+      var left = coord(p.left, W, px), top = coord(p.top, H, px);
       var node = null, cx = left, cy = top;
 
       if (s.shape === 'rect') {
-        var w = num(p.width) * W, h = num(p.height) * H;
+        var w = coord(p.width, W, px), h = coord(p.height, H, px);
         node = svgEl('rect', { x: left, y: top, width: w, height: h });
         cx = left + w / 2; cy = top + h / 2;
       } else if (s.shape === 'ellipse') {
-        var rx = ((p.rx != null && p.rx !== '') ? num(p.rx) : num(p.width) / 2) * W;
-        var ry = ((p.ry != null && p.ry !== '') ? num(p.ry) : num(p.height) / 2) * H;
+        var rx = ((p.rx != null && p.rx !== '') ? coord(p.rx, W, px) : coord(p.width, W, px) / 2);
+        var ry = ((p.ry != null && p.ry !== '') ? coord(p.ry, H, px) : coord(p.height, H, px) / 2);
         node = svgEl('ellipse', {
           cx: left + rx, cy: top + ry,
           rx: Math.max(rx, 0), ry: Math.max(ry, 0)
@@ -227,7 +291,7 @@
         var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         var pts = String(p.points || '').trim().split(/\s+/).filter(Boolean).map(function (pair) {
           var xy = pair.split(',');
-          var x = num(xy[0]) * W, y = num(xy[1]) * H;
+          var x = coord(xy[0], W, px), y = coord(xy[1], H, px);
           if (x < minX) minX = x; if (x > maxX) maxX = x;
           if (y < minY) minY = y; if (y > maxY) maxY = y;
           return x.toFixed(2) + ',' + y.toFixed(2);
@@ -237,7 +301,17 @@
           cx = (minX + maxX) / 2; cy = (minY + maxY) / 2;
         }
       } else if (s.shape === 'text') {
-        var fs = num(p.fs, 16) || 16;
+        /*
+         * Anki 23.10+ stores `fs` NORMALIZED to the image height (e.g. .05);
+         * pre-release ports wrote pixel font sizes (e.g. 24). `scale` is the
+         * fabric scaleX factor (1. = unscaled).
+         */
+        var fsRaw = num(p.fs, NaN);
+        var fs;
+        if (isNaN(fsRaw)) fs = H * 0.05;            // default: 5% of the image
+        else if (fsRaw > 0 && fsRaw < 1) fs = fsRaw * H; // normalized
+        else fs = fsRaw;                             // absolute pixels
+        fs = Math.max(fs * (num(p.scale, 1) || 1), 9);
         var text = String(p.text || '');
         var g = svgEl('g');
         var tw = text.length * fs * 0.62 + fs * 0.5;
@@ -250,6 +324,10 @@
           'text-anchor': 'middle'
         });
         label.setAttribute('font-size', fs);
+        var fill = String(p.fill || '');
+        if (/^(#[0-9a-f]{3,8}|rgba?\()/i.test(fill)) {
+          try { label.style.fill = fill; } catch (e) { /* keep default */ }
+        }
         label.textContent = text;
         g.appendChild(label);
         node = g;
@@ -376,7 +454,7 @@
     var actions = el('div', 'note-actions');
     var pencil = el('button', 'icon-btn edit-btn', '✏️');
     pencil.type = 'button';
-    pencil.title = 'Open this note in Anki';
+    pencil.title = 'Open this note in Anki (deck-scoped search; in AnkiDroid tap the deck name → All decks if it shows no cards)';
     pencil.setAttribute('aria-label', 'Open note ' + note.id + ' in Anki');
     pencil.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -402,8 +480,17 @@
     if (io) {
       top.appendChild(buildIoPreview(note, io));
     } else {
+      // compact line — EVERY field contributes, so not a single bit of note
+      // content is left out of the row (labels/rich view still via ▾)
       var first = el('div', 'note-first');
-      first.innerHTML = rewriteMedia(fieldPreview(note.fields[0]));
+      var parts = [];
+      for (var fi = 0; fi < note.fields.length; fi++) {
+        var compact = AnkiParser.compactHtml(note.fields[fi]);
+        if (compact) parts.push(renderClozes(compact));
+      }
+      first.innerHTML = parts.length
+        ? rewriteMedia(parts.join(' <span class="field-sep">·</span> '))
+        : '<span class="empty">(empty)</span>';
       top.appendChild(first);
     }
 
@@ -433,9 +520,9 @@
         value.innerHTML = '<span class="io-summary">👁 ' + ioSummary(ioShapesOf(note, io)) +
           ' — use Reveal on the image above</span>';
       } else {
-        value.innerHTML = rewriteMedia(
-          (state.expanded[note.id] ? AnkiParser.richHtml(note.fields[i]) : fieldPreview(note.fields[i]))
-        );
+        value.innerHTML = rewriteMedia(renderClozes(
+          state.expanded[note.id] ? AnkiParser.richHtml(note.fields[i]) : fieldPreview(note.fields[i])
+        ));
       }
       row.appendChild(label);
       row.appendChild(value);
@@ -467,6 +554,78 @@
   }
 
   /* ------------------------------ filtering ------------------------------- */
+
+  /*
+   * Smart token-based search: the query is split on whitespace; a note matches
+   * when EVERY token matches somewhere (AND of substrings). Matching runs
+   * against the note's VISIBLE text (all fields + tags) only — not the note
+   * type name, not deck names, not HTML attribute noise like filenames inside
+   * <img src="…">. Cloze markup is stripped so "{{c1::two}}" matches "two" but
+   * not "c1". Computed once per note and cached.
+   */
+  function searchTokens() {
+    return state.filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  }
+
+  function noteHaystack(n) {
+    if (n._hay) return n._hay;
+    n._hay = (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' '))
+      .replace(/\{\{c\d+::/g, ' ')      // cloze wrappers — the inner text stays
+      .replace(/\}\}/g, ' ')
+      .replace(/\[sound:[^\]]*\]/gi, ' ') // media references are not content
+      .replace(/<[^>]+>/g, ' ')           // HTML markup → spaces (drops attributes)
+      .replace(/&[a-z#0-9]+;/gi, ' ')     // entities
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+    return n._hay;
+  }
+
+  /**
+   * Wrap every occurrence of any search token (case-insensitive) inside a
+   * <mark class="hl">. Runs as a DOM pass over text nodes only — never touches
+   * attributes, SVG internals or already-created marks.
+   */
+  function highlightTokens(root, tokens) {
+    if (!root || !tokens || !tokens.length) return;
+    var parts = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (t) parts.push(t);
+    }
+    if (!parts.length) return;
+    var re = new RegExp('(' + parts.join('|') + ')', 'gi');
+
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach(function (node) {
+      var txt = node.nodeValue;
+      if (!txt) return;
+      var parent = node.parentElement;
+      if (!parent) return;
+      var name = parent.nodeName;
+      if (name === 'SCRIPT' || name === 'STYLE' || name === 'MARK') return;
+      if (parent.closest && parent.closest('svg')) return; // keep SVG geometry intact
+      re.lastIndex = 0;
+      if (!re.test(txt)) return;
+
+      re.lastIndex = 0;
+      var frag = document.createDocumentFragment();
+      var last = 0, m;
+      while ((m = re.exec(txt)) !== null) {
+        if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        var mark = document.createElement('mark');
+        mark.className = 'hl';
+        mark.textContent = m[0];
+        frag.appendChild(mark);
+        last = m.index + m[0].length;
+        if (m[0].length === 0) re.lastIndex++;
+      }
+      if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+      parent.replaceChild(frag, node);
+    });
+  }
 
   /*
    * Card-type classification used by BOTH the toggle chips and the per-card
@@ -506,6 +665,8 @@
   }
 
   function notePassesTypeFilter(note) {
+    // note-type selectors first: a hidden note type hides the note outright
+    if (state.modelFilter && state.modelFilter[note.modelName] === false) return false;
     if (!state.typeFilter) return true;
     var set = noteClasses(note);
     var allOn = true;
@@ -519,7 +680,7 @@
     return false;
   }
 
-  /** Build the toggle chips once; counts/pressed-state refreshed per render. */
+  /** Build the card-state toggle chips once; counts refreshed per render. */
   function buildTypeBar() {
     if (!ui.typeChips) return;
     ui.typeChips.innerHTML = '';
@@ -541,9 +702,49 @@
     if (ui.typeReset) {
       ui.typeReset.addEventListener('click', function () {
         state.typeFilter = defaultTypeFilter();
+        state.modelFilter = {};
         renderNotes();
       });
     }
+  }
+
+  /*
+   * NOTE-TYPE selectors (Basic, Cloze, Image Occlusion, …) — built from the
+   * loaded deck's own note types, sitting ABOVE the card-state chips: they
+   * decide which note types are visible at all. Each chip gets a stable
+   * seeded dot colour so the row is scannable at a glance.
+   */
+  function rebuildModelChips() {
+    if (!ui.modelChips) return;
+    ui.modelChips.innerHTML = '';
+    var counts = {};
+    state.notes.forEach(function (n) {
+      var name = n.modelName || 'Note';
+      counts[name] = (counts[name] || 0) + 1;
+    });
+    var names = Object.keys(counts).sort(function (a, b) {
+      var d = counts[b] - counts[a];
+      return d || a.localeCompare(b);
+    });
+    var frag = document.createDocumentFragment();
+    names.forEach(function (name, idx) {
+      var chip = el('button', 'type-chip model-chip');
+      chip.type = 'button';
+      chip.dataset.model = name;
+      chip.setAttribute('aria-pressed', 'true');
+      chip.title = 'Show/hide notes of type ' + name;
+      chip.appendChild(el('span', 'chip-label', name));
+      chip.appendChild(el('span', 'chip-count', counts[name].toLocaleString()));
+      var hue = ((idx + 1) * 137.508) % 360; // same seeded walk as the clozes
+      chip.style.setProperty('--chip-dot', 'hsl(' + hue.toFixed(1) + ', 80%, 66%)');
+      chip.addEventListener('click', function () {
+        var on = state.modelFilter[name] !== false;
+        state.modelFilter[name] = !on;
+        renderNotes();
+      });
+      frag.appendChild(chip);
+    });
+    ui.modelChips.appendChild(frag);
   }
 
   function updateTypeBar() {
@@ -567,54 +768,58 @@
       var cc = chip.querySelector('.chip-count');
       if (cc) cc.textContent = counts[id].toLocaleString();
     }
+    if (ui.modelChips) {
+      var mchips = ui.modelChips.children;
+      for (var j = 0; j < mchips.length; j++) {
+        var mchip = mchips[j];
+        var mon = state.modelFilter[mchip.dataset.model] !== false;
+        if (!mon) anyOff = true;
+        mchip.setAttribute('aria-pressed', mon ? 'true' : 'false');
+      }
+    }
     if (ui.typeReset) ui.typeReset.hidden = !anyOff;
   }
 
   function applyFilters() {
-    var q = state.filter.trim().toLowerCase();
+    var toks = searchTokens();
     var out = [];
     for (var i = 0; i < state.notes.length; i++) {
       var n = state.notes[i];
-      if (q) {
-        var hay = (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' ')).toLowerCase();
-        if (hay.indexOf(q) === -1) continue;
+      if (toks.length) {
+        // smart token search: EVERY token must match (AND), each anywhere in
+        // the note's text, tags, note type or deck names
+        var hay = noteHaystack(n);
+        var miss = false;
+        for (var t = 0; t < toks.length; t++) {
+          if (hay.indexOf(toks[t]) === -1) { miss = true; break; }
+        }
+        if (miss) continue;
       }
       if (!notePassesTypeFilter(n)) continue;
       out.push(n);
     }
 
-    var mode = state.sortMode;
+    // fixed, meaningful order: first card's deck, then sort field, then id
+    // (the sort dropdown was removed by design — filters decide WHAT is shown)
     out.sort(function (a, b) {
-      if (mode === 'model') {
-        var mc = (a.modelName || '').localeCompare(b.modelName || '');
-        if (mc) return mc;
-      } else if (mode === 'time') {
-        var tc = (b.mod || 0) - (a.mod || 0);
-        if (tc) return tc;
-      } else if (mode === 'text') {
-        var sc = (a.sfld || '').localeCompare(b.sfld || '');
-        if (sc) return sc;
-      } else {
-        // deck: group by first card's deck, then sort field
-        var da = (a.cards[0] && a.cards[0].deckName) || '—';
-        var db = (b.cards[0] && b.cards[0].deckName) || '—';
-        var cmp = da.localeCompare(db);
-        if (cmp) return cmp;
-      }
-      // stable, meaningful tie-break for every mode
-      var t = (a.sfld || '').localeCompare(b.sfld || '');
-      if (t) return t;
-      return (a.id || 0) - (b.id || 0);
+      var da = (a.cards[0] && a.cards[0].deckName) || '—';
+      var db = (b.cards[0] && b.cards[0].deckName) || '—';
+      var r = da.localeCompare(db);
+      if (!r) r = (a.sfld || '').localeCompare(b.sfld || '');
+      if (!r) r = (a.id || 0) - (b.id || 0);
+      return r;
     });
     return out;
   }
 
   function renderNotes() {
+    var toks = searchTokens();
     var list = applyFilters();
     ui.list.innerHTML = '';
     var frag = document.createDocumentFragment();
     list.forEach(function (n) { frag.appendChild(buildNoteNode(n)); });
     ui.list.appendChild(frag);
+    highlightTokens(ui.list, toks); // realtime match highlighting
     ui.count.textContent = list.length.toLocaleString() +
       (list.length !== state.notes.length ? ' / ' + state.notes.length.toLocaleString() : '');
     updateTypeBar();
@@ -623,27 +828,50 @@
 
   /* ------------------------------ editing bridge ---------------------------- */
   /*
-   * Deep links into the installed Anki clients. AnkiDroid does NOT handle
-   * intent://note links — an intent:// URL with a Play-Store fallback_url is
-   * what kept bouncing users to the Store. What AnkiDroid DOES expose is a
-   * real, registered deep link (AnkiDroid 2.22+):
+   * Deep links into the installed Anki clients.
    *
-   *     anki://x-callback-url/browser?search=<query>
+   * AnkiDroid registers a real BROWSABLE deep link (verified against its
+   * AndroidManifest + IntentHandler, shipped since v2.17, Aug 2022):
    *
-   * which opens the Card Browser pre-filtered with an Anki search query, so
-   * `nid:<note id>` lands on exactly this note (tap it to edit). AnkiMobile
-   * (2.0.90+) speaks `anki://x-callback-url/search?query=`. We navigate with
-   * the plain anki:// scheme — no intent:// wrapper, no Play Store fallback:
-   * if no client is installed nothing happens instead of a Store redirect.
+   *     anki://x-callback-url/browser?search=<Anki search>
+   *
+   * UPSTREAM LIMITATION (verified in AnkiDroid's CardBrowserViewModel +
+   * SearchRequest.toSearchString): for a URL deep link the browser installs
+   * the LAST-OPENED DECK as a structured filter and ANDs it with the search
+   * text — AND(deck:"<last deck>", our query) — and the URL protocol has no
+   * all-decks flag (only AnkiDroid's internal JS bridge does). So when the
+   * last-opened deck differs from this note's deck, AnkiDroid shows "no cards
+   * matched" until the user taps the deck selector → All decks; then the
+   * search re-runs and finds the note. We still send the deck-scoped term
+   *
+   *     deck:"Biology::Cell Division" nid:1004
+   *
+   * because it is correct for AnkiMobile (2.0.90+,
+   * anki://x-callback-url/search?query=…), for AnkiDroid once the deck
+   * selector is on All decks, and for any future AnkiDroid that special-cases
+   * deep links — and the toast tells the user exactly what to do if AnkiDroid
+   * comes up empty. We navigate with the plain anki:// scheme — NEVER an
+   * intent:// wrapper: an intent:// URL carries the package name, and Chrome
+   * bounces to the Play Store whenever no handler resolves. With a bare
+   * scheme, a missing client just does nothing — and the watchdog toast says
+   * what to paste instead.
    */
+
+  /** The Anki search term that isolates exactly this note. */
+  function ankiSearchTerm(note) {
+    var term = 'nid:' + note.id;
+    var deck = note.cards && note.cards[0] && note.cards[0].deckName;
+    if (deck) term = 'deck:"' + String(deck).replace(/"/g, '') + '" ' + term;
+    return term;
+  }
 
   function ankiDeepLink(note, userAgent) {
     var ua = userAgent || navigator.userAgent || '';
-    var nid = encodeURIComponent('nid:' + note.id);
+    var q = encodeURIComponent(ankiSearchTerm(note));
     if (/iPhone|iPad|iPod/i.test(ua)) {
-      return 'anki://x-callback-url/search?query=' + nid;   // AnkiMobile
+      return 'anki://x-callback-url/search?query=' + q;     // AnkiMobile
     }
-    return 'anki://x-callback-url/browser?search=' + nid;   // AnkiDroid / desktop try
+    return 'anki://x-callback-url/browser?search=' + q;     // AnkiDroid 2.17+
   }
 
   function copyText(text) {
@@ -677,18 +905,42 @@
   function openAnkiFor(note) {
     if (!note) return;
     var target = ankiDeepLink(note);
+    var term = ankiSearchTerm(note);
+    var deck = note.cards && note.cards[0] && note.cards[0].deckName;
     // Handy fallback: the exact search term is on the clipboard either way.
-    copyText('nid:' + note.id);
-    toast('Opening Anki at note ' + note.id + ' (nid:' + note.id + ' copied)');
+    copyText(term);
+
+    // If a client picks the link up, this tab is hidden/backgrounded. If the
+    // page is still fully visible two seconds later, nothing did — say so,
+    // and stay put (no Play Store redirect, ever).
+    var launched = false;
+    var markLaunched = function () { launched = true; };
+    try {
+      window.addEventListener('pagehide', markLaunched, { once: true });
+      window.addEventListener('blur', markLaunched, { once: true });
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) markLaunched();
+      }, { once: true });
+    } catch (e) { /* older browsers */ }
+
+    toast('Opening ' + (deck ? deck + ' · ' : '') + 'note ' + note.id + ' — if AnkiDroid shows “no cards”, tap the deck name at the top → All decks', 4200);
     try { window.location.href = target; } catch (e) { /* scheme not handled */ }
     if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* noop */ } }
+
+    setTimeout(function () {
+      if (launched || document.hidden) return;
+      toast('No Anki app answered the link — “' + term +
+        '” is on your clipboard. Paste it into the Card Browser search bar.', 5000);
+    }, 2200);
   }
 
   /* --------------------------------- worker -------------------------------- */
 
   function ensureWorker() {
     if (worker) return;
-    worker = new Worker('js/worker.js');
+    // ?v keeps the worker in lockstep with this exact app version, so a
+    // mid-deploy page can never run against a half-updated parser.
+    worker = new Worker('js/worker.js?v=' + APP_VERSION);
     worker.addEventListener('message', function (ev) {
       var m = ev.data;
       if (!m) return;
@@ -786,6 +1038,8 @@
       state.files = buildMediaMap(res.data.media);
       state.expanded = {};
       state.typeFilter = defaultTypeFilter();
+      state.modelFilter = {};
+      rebuildModelChips(); // note-type selectors follow the loaded deck
       state.fileName = fileName || '';
       state.fileSize = fileSize || 0;
       state.parseMs = Math.round(res.elapsed);
@@ -793,14 +1047,16 @@
 
       ui.fileName.textContent = state.fileName + (state.fileSize ? '  (' + fmtBytes(state.fileSize) + ')' : '');
       ui.fileName.hidden = false;
-      $('#new-file').hidden = false;
       // landing screen fully steps aside — the deck list IS the screen now
+      // (the [hidden]{display:none!important} CSS rule guarantees it really
+      // disappears, whatever display value its class carries)
       ui.dropzone.hidden = true;
       if (ui.helpCard) ui.helpCard.hidden = true;
       ui.main.hidden = false;
       if (ui.typeBar) ui.typeBar.hidden = false;
       renderNotes();
       updateStats();
+      try { document.title = (state.fileName ? state.fileName + ' — ' : '') + 'Anki Inspector'; } catch (e) { /* noop */ }
       try { window.scrollTo(0, 0); } catch (e) { /* noop */ }
     } catch (err) {
       if (reqId !== state.activeRequest) return;
@@ -995,15 +1251,40 @@
     renderNotes();
   });
 
-  ui.sort.addEventListener('change', function () {
-    state.sortMode = ui.sort.value;
-    renderNotes();
-  });
+  // (the sort dropdown + direction toggle were removed by design — the list
+  // keeps one stable, meaningful order and filtering does the rest)
 
   ui.errClose.addEventListener('click', function () { showErrorBox(false); });
+
+  /* ------------------------- move-to-top button ------------------------------ */
+  /* Appears once the list is scrolled past ~600px and glides the view back to
+     the top (and therefore back to the search bar) on tap. */
+  if (ui.toTop) {
+    var refreshToTop = function () {
+      var y = window.scrollY || window.pageYOffset || 0;
+      ui.toTop.classList.toggle('show', y > 600);
+    };
+    window.addEventListener('scroll', refreshToTop, { passive: true });
+    refreshToTop();
+    ui.toTop.addEventListener('click', function () {
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (e) {
+        window.scrollTo(0, 0);
+      }
+    });
+  }
+
+  // (no "Open another" button: reloading/reopening the app returns to the
+  // picker — one obvious way to load a different file, zero toolbar clutter)
+  // the banner must be dismissible in every way — Escape too, not just the button
+  document.addEventListener('keydown', function (e) {
+    if ((e.key === 'Escape' || e.key === 'Esc') && !ui.errBox.hidden) showErrorBox(false);
+  });
   function showErrorBox(on) { ui.errBox.hidden = !on; }
 
-  $('#new-file').addEventListener('click', function () { ui.fileInput.click(); });
+  // (the old "#new-file / Open another" button was removed by design — the
+  // share sheet, the file picker on relaunch, or reloading covers it)
 
   /* ------------------------------ install prompt ---------------------------- */
   /*
@@ -1141,8 +1422,12 @@
     loadApkg: loadApkg,
     handleShareTarget: handleShareTarget,
     ankiDeepLink: ankiDeepLink,
+    ankiSearchTerm: ankiSearchTerm,
     cardClass: cardClass,
-    buildTypeBar: buildTypeBar
+    buildTypeBar: buildTypeBar,
+    rebuildModelChips: rebuildModelChips,
+    drawIoShapes: drawIoShapes,
+    renderClozes: renderClozes
   };
 
   document.addEventListener('DOMContentLoaded', function () {
