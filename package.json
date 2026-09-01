@@ -1,0 +1,15 @@
+{
+  "name": "anki-inspector",
+  "version": "1.0.0",
+  "description": "Serverless PWA to inspect Anki .apkg files — WASM SQLite, zero uploads.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/make-sample.js && node test/parser.test.js && node test/worker.test.js",
+    "test:dom": "node test/dom.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  },
+  "license": "MIT"
+}
