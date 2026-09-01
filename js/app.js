@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '3.0.0';
+  var APP_VERSION = '3.1.0';
 
   /* --------------------------------- state --------------------------------- */
 
@@ -25,6 +25,7 @@
     files: {},            // "filename.jpg" -> { url, type, bytes } (blob URL)
     sortMode: 'deck',     // 'deck' | 'model' | 'time' | 'text'
     filter: '',           // live search text
+    typeFilter: defaultTypeFilter(), // card-type visibility toggles (chips)
     expanded: {},         // noteId -> bool (shows full fields)
     fileName: '',
     fileSize: 0,
@@ -57,6 +58,10 @@
     search: $('#search'),
     sort: $('#sort'),
     count: $('#count'),
+    typeBar: $('#type-bar'),
+    typeChips: $('#type-chips'),
+    typeReset: $('#type-reset'),
+    helpCard: $('#help-card'),
     bar: $('#progress-bar'),
     progText: $('#progress-text'),
     progWrap: $('#progress-wrap'),
@@ -157,16 +162,222 @@
     return compact;
   }
 
+  /* ------------------------- image occlusion rendering ---------------------- */
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  function svgEl(tag, attrs) {
+    var n = document.createElementNS(SVG_NS, tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        var v = attrs[k];
+        if (v != null && v !== '') n.setAttribute(k, v);
+      });
+    }
+    return n;
+  }
+
+  function num(v, fallback) {
+    var n = parseFloat(v);
+    return isNaN(n) ? (fallback || 0) : n;
+  }
+
+  /** Stored angle is 1/10000 of a turn (Anki's angleToStored). */
+  function storedAngleToDeg(v) {
+    if (v == null || v === '') return 0;
+    var n = parseFloat(v);
+    if (isNaN(n)) return 0;
+    return ((n % 10000) / 10000) * 360;
+  }
+
+  /**
+   * Draw parsed occlusion shapes into the overlay SVG. Coordinates in the note
+   * are normalized (0..1). Initially we draw in a 0..1 viewBox that stretches
+   * with the image; once the image has loaded we redraw in absolute pixels
+   * (viewBox = natural size) so text masks get real font sizes.
+   */
+  function drawIoShapes(svg, shapes, size) {
+    var W = size ? size.width : 1;
+    var H = size ? size.height : 1;
+    // placeholder pass (before the image loads) assumes a mid-size image
+    if (!size) { W = 640; H = 480; }
+    var vb = '0 0 ' + W + ' ' + H;
+    svg.setAttribute('viewBox', vb);
+
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    shapes.forEach(function (s) {
+      var p = s.props || {};
+      var left = num(p.left) * W, top = num(p.top) * H;
+      var node = null, cx = left, cy = top;
+
+      if (s.shape === 'rect') {
+        var w = num(p.width) * W, h = num(p.height) * H;
+        node = svgEl('rect', { x: left, y: top, width: w, height: h });
+        cx = left + w / 2; cy = top + h / 2;
+      } else if (s.shape === 'ellipse') {
+        var rx = ((p.rx != null && p.rx !== '') ? num(p.rx) : num(p.width) / 2) * W;
+        var ry = ((p.ry != null && p.ry !== '') ? num(p.ry) : num(p.height) / 2) * H;
+        node = svgEl('ellipse', {
+          cx: left + rx, cy: top + ry,
+          rx: Math.max(rx, 0), ry: Math.max(ry, 0)
+        });
+        cx = left + rx; cy = top + ry;
+      } else if (s.shape === 'polygon') {
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        var pts = String(p.points || '').trim().split(/\s+/).filter(Boolean).map(function (pair) {
+          var xy = pair.split(',');
+          var x = num(xy[0]) * W, y = num(xy[1]) * H;
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          return x.toFixed(2) + ',' + y.toFixed(2);
+        });
+        if (pts.length >= 3) {
+          node = svgEl('polygon', { points: pts.join(' ') });
+          cx = (minX + maxX) / 2; cy = (minY + maxY) / 2;
+        }
+      } else if (s.shape === 'text') {
+        var fs = num(p.fs, 16) || 16;
+        var text = String(p.text || '');
+        var g = svgEl('g');
+        var tw = text.length * fs * 0.62 + fs * 0.5;
+        var th = fs * 1.45;
+        g.appendChild(svgEl('rect', { class: 'io-text-bg', x: left, y: top, width: tw, height: th, rx: fs * 0.15 }));
+        var label = svgEl('text', {
+          class: 'io-text-label',
+          x: left + tw / 2,
+          y: top + fs * 1.08,
+          'text-anchor': 'middle'
+        });
+        label.setAttribute('font-size', fs);
+        label.textContent = text;
+        g.appendChild(label);
+        node = g;
+        cx = left + tw / 2; cy = top + th / 2;
+      }
+
+      if (!node) return;
+      var angle = storedAngleToDeg(p.angle);
+      if (angle) node.setAttribute('transform', 'rotate(' + angle.toFixed(2) + ' ' + cx.toFixed(2) + ' ' + cy.toFixed(2) + ')');
+      node.setAttribute('class', (node.getAttribute('class') || '') + ' io-shape io-' + s.shape);
+      node.setAttribute('data-ordinal', s.ordinal || 0);
+      svg.appendChild(node);
+    });
+  }
+
+  function ioShapesOf(note, io) {
+    if (!note._ioShapes && io.occlusions >= 0 && note.fields[io.occlusions] != null) {
+      note._ioShapes = AnkiParser.parseOcclusionShapes(note.fields[io.occlusions]);
+    }
+    return note._ioShapes || [];
+  }
+
+  function ioSummary(shapes) {
+    if (!shapes.length) return 'no masks';
+    var ords = {};
+    shapes.forEach(function (s) { ords[s.ordinal || 0] = true; });
+    var groups = Object.keys(ords).length;
+    return shapes.length + ' mask' + (shapes.length === 1 ? '' : 's') +
+      (groups > 1 ? ' · ' + groups + ' cloze groups' : '');
+  }
+
+  /**
+   * Image-occlusion preview: the base image with the occlusion masks drawn on
+   * top (masked = question side). The 👁 button reveals what's underneath.
+   */
+  function buildIoPreview(note, io) {
+    var wrap = el('div', 'io-preview');
+
+    // --- base image (map src to a blob URL via the shared rewrite) ---
+    var holder = document.createElement('div');
+    holder.innerHTML = rewriteMedia(AnkiParser.compactHtml(note.fields[io.image]));
+    var img = holder.querySelector('img');
+    if (!img) {
+      wrap.appendChild(el('p', 'io-missing', 'Image occlusion note — base image missing from the package.'));
+      return wrap;
+    }
+    img.className = 'io-img';
+    img.removeAttribute('width');
+    img.removeAttribute('height');
+    var frame = el('div', 'io-frame');
+    frame.appendChild(img);
+
+    if (io.kind === 'svg') {
+      // Legacy "Image Occlusion Enhanced": the masks are literal <svg> markup.
+      var occl = document.createElement('div');
+      occl.innerHTML = AnkiParser.sanitizeHtml(note.fields[io.occlusions]);
+      var raw = occl.querySelector('svg');
+      if (raw) {
+        raw.classList.add('io-overlay', 'io-overlay-svg');
+        if (!raw.getAttribute('viewBox')) {
+          var sw = parseFloat(raw.getAttribute('width'));
+          var sh = parseFloat(raw.getAttribute('height'));
+          if (sw && sh) raw.setAttribute('viewBox', '0 0 ' + sw + ' ' + sh);
+        }
+        raw.removeAttribute('width');
+        raw.removeAttribute('height');
+        raw.setAttribute('preserveAspectRatio', 'none');
+        frame.appendChild(raw);
+      }
+    } else {
+      var shapes = ioShapesOf(note, io);
+      if (shapes.length) {
+        var overlay = svgEl('svg', {
+          class: 'io-overlay',
+          viewBox: '0 0 640 480',
+          preserveAspectRatio: 'none'
+        });
+        drawIoShapes(overlay, shapes, null);
+        frame.appendChild(overlay);
+
+        // once the image's real size is known, redraw in true pixel geometry
+        var redraw = function () {
+          var w = img.naturalWidth, h = img.naturalHeight;
+          if (!w || !h) return;
+          drawIoShapes(overlay, shapes, { width: w, height: h });
+        };
+        if (img.complete && img.naturalWidth) redraw();
+        else img.addEventListener('load', redraw, { once: true });
+      }
+    }
+
+    wrap.appendChild(frame);
+
+    // --- caption + reveal toggle ---
+    var bar = el('div', 'io-bar');
+    bar.appendChild(el('span', 'io-count', '🖼️ ' + ioSummary(ioShapesOf(note, io))));
+    var toggle = el('button', 'io-toggle', '👁 Reveal');
+    toggle.type = 'button';
+    toggle.title = 'Toggle the occlusion masks';
+    toggle.setAttribute('aria-pressed', 'false');
+    toggle.addEventListener('click', function () {
+      var revealed = wrap.classList.toggle('revealed');
+      toggle.textContent = revealed ? '🙈 Mask' : '👁 Reveal';
+      toggle.setAttribute('aria-pressed', revealed ? 'true' : 'false');
+    });
+    bar.appendChild(toggle);
+    wrap.appendChild(bar);
+
+    return wrap;
+  }
+
   function buildNoteNode(note) {
     var node = el('li', 'note' + (note.cards.length ? '' : ' no-cards'));
     node.dataset.id = note.id;
+
+    // ---- image occlusion? render the masked-image preview instead of text ----
+    // (cached on the note — fields are scanned only once per loaded deck)
+    if (note._io === undefined) {
+      note._io = AnkiParser.detectImageOcclusion(note.fields, note.fieldNames, note.modelName) || null;
+    }
+    var io = note._io;
 
     // ---- left: pencil (edit in Anki deep-link) ----
     var actions = el('div', 'note-actions');
     var pencil = el('button', 'icon-btn edit-btn', '✏️');
     pencil.type = 'button';
-    pencil.title = 'Edit in Anki';
-    pencil.setAttribute('aria-label', 'Edit note in Anki');
+    pencil.title = 'Open this note in Anki';
+    pencil.setAttribute('aria-label', 'Open note ' + note.id + ' in Anki');
     pencil.addEventListener('click', function (e) {
       e.stopPropagation();
       openAnkiFor(note);
@@ -188,14 +399,19 @@
     }
     top.appendChild(meta);
 
-    var first = el('div', 'note-first');
-    first.innerHTML = rewriteMedia(fieldPreview(note.fields[0]));
-    top.appendChild(first);
+    if (io) {
+      top.appendChild(buildIoPreview(note, io));
+    } else {
+      var first = el('div', 'note-first');
+      first.innerHTML = rewriteMedia(fieldPreview(note.fields[0]));
+      top.appendChild(first);
+    }
 
     var cardsRow = el('div', 'note-cards');
     note.cards.forEach(function (card) {
-      var c = el('span', 'card-chip', card.deckName);
-      c.title = 'Due ' + (card.due != null ? card.due : '—') +
+      var cls = cardClass(card);
+      var c = el('span', 'card-chip k-' + cls, card.deckName);
+      c.title = cls + ' · due ' + (card.due != null ? card.due : '—') +
                 ' · queue ' + card.queue + ' · reps ' + card.reps +
                 ' · lapses ' + card.lapses;
       cardsRow.appendChild(c);
@@ -212,9 +428,15 @@
       var row = el('div', 'extra-field');
       var label = el('span', 'extra-label', fname + ':');
       var value = el('span', 'extra-value');
-      value.innerHTML = rewriteMedia(
-        (state.expanded[note.id] ? AnkiParser.richHtml(note.fields[i]) : fieldPreview(note.fields[i]))
-      );
+      if (io && i === io.occlusions) {
+        // the raw mask text is machine noise — show a human summary instead
+        value.innerHTML = '<span class="io-summary">👁 ' + ioSummary(ioShapesOf(note, io)) +
+          ' — use Reveal on the image above</span>';
+      } else {
+        value.innerHTML = rewriteMedia(
+          (state.expanded[note.id] ? AnkiParser.richHtml(note.fields[i]) : fieldPreview(note.fields[i]))
+        );
+      }
       row.appendChild(label);
       row.appendChild(value);
       extra.appendChild(row);
@@ -246,9 +468,106 @@
 
   /* ------------------------------ filtering ------------------------------- */
 
-  function cardSortValue(card) {
-    var TYPE = { 0: 'new', 1: 'learn', 2: 'due', 3: 'filtered' };
-    return TYPE[card.type] || 'other';
+  /*
+   * Card-type classification used by BOTH the toggle chips and the per-card
+   * chips in each note row. Anki cards: type 0=new, 1=learning, 2=review,
+   * 3=filtered; queue -1=suspended, -2/-3=buried, 0=new, 1=learn, 2=review,
+   * 3=day-learn, 4=preview. Queue is the live state, so it wins when >= 0.
+   */
+  function cardClass(card) {
+    var q = card.queue;
+    if (q === -1) return 'suspended';
+    if (q === -2 || q === -3) return 'buried';
+    var t = q >= 0 ? q : card.type;
+    if (t === 0) return 'new';
+    if (t === 2) return 'due';
+    return 'learn';
+  }
+
+  var CARD_TYPE_CHIPS = [
+    { id: 'new', label: 'New' },
+    { id: 'learn', label: 'Learning' },
+    { id: 'due', label: 'Review' },
+    { id: 'suspended', label: 'Suspended' },
+    { id: 'buried', label: 'Buried' },
+    { id: 'nocards', label: 'No cards' }
+  ];
+
+  function defaultTypeFilter() {
+    return { new: true, learn: true, due: true, suspended: true, buried: true, nocards: true };
+  }
+
+  /** Set of card-type classes a note currently "occupies". */
+  function noteClasses(note) {
+    var set = {};
+    if (!note.cards || !note.cards.length) set.nocards = true;
+    for (var i = 0; i < note.cards.length; i++) set[cardClass(note.cards[i])] = true;
+    return set;
+  }
+
+  function notePassesTypeFilter(note) {
+    if (!state.typeFilter) return true;
+    var set = noteClasses(note);
+    var allOn = true;
+    for (var k in state.typeFilter) {
+      if (!state.typeFilter[k]) { allOn = false; break; }
+    }
+    if (allOn) return true; // nothing hidden → no filtering at all
+    for (var cls in set) {
+      if (state.typeFilter[cls]) return true; // at least one card type is visible
+    }
+    return false;
+  }
+
+  /** Build the toggle chips once; counts/pressed-state refreshed per render. */
+  function buildTypeBar() {
+    if (!ui.typeChips) return;
+    ui.typeChips.innerHTML = '';
+    CARD_TYPE_CHIPS.forEach(function (t) {
+      var chip = el('button', 'type-chip');
+      chip.type = 'button';
+      chip.dataset.type = t.id;
+      chip.setAttribute('aria-pressed', 'true');
+      chip.title = 'Show/hide notes whose cards are ' + t.label.toLowerCase();
+      chip.appendChild(el('span', 'chip-label', t.label));
+      var count = el('span', 'chip-count', '0');
+      chip.appendChild(count);
+      chip.addEventListener('click', function () {
+        state.typeFilter[t.id] = !state.typeFilter[t.id];
+        renderNotes();
+      });
+      ui.typeChips.appendChild(chip);
+    });
+    if (ui.typeReset) {
+      ui.typeReset.addEventListener('click', function () {
+        state.typeFilter = defaultTypeFilter();
+        renderNotes();
+      });
+    }
+  }
+
+  function updateTypeBar() {
+    if (!ui.typeChips) return;
+    var counts = {};
+    CARD_TYPE_CHIPS.forEach(function (t) { counts[t.id] = 0; });
+    state.notes.forEach(function (n) {
+      var set = noteClasses(n);
+      for (var cls in set) {
+        if (counts[cls] != null) counts[cls] += 1;
+      }
+    });
+    var anyOff = false;
+    var chips = ui.typeChips.children;
+    for (var i = 0; i < chips.length; i++) {
+      var chip = chips[i];
+      var id = chip.dataset.type;
+      var on = !state.typeFilter || state.typeFilter[id];
+      if (!on) anyOff = true;
+      chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+      var cc = chip.querySelector('.chip-count');
+      if (cc) cc.textContent = counts[id].toLocaleString();
+    }
+    if (ui.typeReset) ui.typeReset.hidden = !anyOff;
   }
 
   function applyFilters() {
@@ -260,26 +579,32 @@
         var hay = (n.sfld + ' ' + n.fields.join(' ') + ' ' + n.tags.join(' ')).toLowerCase();
         if (hay.indexOf(q) === -1) continue;
       }
+      if (!notePassesTypeFilter(n)) continue;
       out.push(n);
     }
 
     var mode = state.sortMode;
     out.sort(function (a, b) {
       if (mode === 'model') {
-        return (a.modelName || '').localeCompare(b.modelName || '');
+        var mc = (a.modelName || '').localeCompare(b.modelName || '');
+        if (mc) return mc;
+      } else if (mode === 'time') {
+        var tc = (b.mod || 0) - (a.mod || 0);
+        if (tc) return tc;
+      } else if (mode === 'text') {
+        var sc = (a.sfld || '').localeCompare(b.sfld || '');
+        if (sc) return sc;
+      } else {
+        // deck: group by first card's deck, then sort field
+        var da = (a.cards[0] && a.cards[0].deckName) || '—';
+        var db = (b.cards[0] && b.cards[0].deckName) || '—';
+        var cmp = da.localeCompare(db);
+        if (cmp) return cmp;
       }
-      if (mode === 'time') {
-        return (b.mod || 0) - (a.mod || 0);
-      }
-      if (mode === 'text') {
-        return (a.sfld || '').localeCompare(b.sfld || '');
-      }
-      // deck: group by first card's deck, then sort field
-      var da = (a.cards[0] && a.cards[0].deckName) || '—';
-      var db = (b.cards[0] && b.cards[0].deckName) || '—';
-      var cmp = da.localeCompare(db);
-      if (cmp) return cmp;
-      return (a.sfld || '').localeCompare(b.sfld || '');
+      // stable, meaningful tie-break for every mode
+      var t = (a.sfld || '').localeCompare(b.sfld || '');
+      if (t) return t;
+      return (a.id || 0) - (b.id || 0);
     });
     return out;
   }
@@ -292,37 +617,70 @@
     ui.list.appendChild(frag);
     ui.count.textContent = list.length.toLocaleString() +
       (list.length !== state.notes.length ? ' / ' + state.notes.length.toLocaleString() : '');
+    updateTypeBar();
     updateStats();
   }
 
   /* ------------------------------ editing bridge ---------------------------- */
+  /*
+   * Deep links into the installed Anki clients. AnkiDroid does NOT handle
+   * intent://note links — an intent:// URL with a Play-Store fallback_url is
+   * what kept bouncing users to the Store. What AnkiDroid DOES expose is a
+   * real, registered deep link (AnkiDroid 2.22+):
+   *
+   *     anki://x-callback-url/browser?search=<query>
+   *
+   * which opens the Card Browser pre-filtered with an Anki search query, so
+   * `nid:<note id>` lands on exactly this note (tap it to edit). AnkiMobile
+   * (2.0.90+) speaks `anki://x-callback-url/search?query=`. We navigate with
+   * the plain anki:// scheme — no intent:// wrapper, no Play Store fallback:
+   * if no client is installed nothing happens instead of a Store redirect.
+   */
 
-  var ANDROID_INTENT =
-    'intent://com.ichi2.anki/#Intent;scheme=anki;package=com.ichi2.anki;' +
-    'action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;' +
-    'S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.ichi2.anki;end;';
+  function ankiDeepLink(note, userAgent) {
+    var ua = userAgent || navigator.userAgent || '';
+    var nid = encodeURIComponent('nid:' + note.id);
+    if (/iPhone|iPad|iPod/i.test(ua)) {
+      return 'anki://x-callback-url/search?query=' + nid;   // AnkiMobile
+    }
+    return 'anki://x-callback-url/browser?search=' + nid;   // AnkiDroid / desktop try
+  }
+
+  function copyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(function () { /* noop */ });
+      }
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    } catch (e) { /* clipboard is best-effort */ }
+    return Promise.resolve();
+  }
+
+  /** Small transient toast (auto-dismisses — unlike the error banner). */
+  function toast(message, ms) {
+    var t = el('div', 'update-toast', message);
+    document.body.appendChild(t);
+    requestAnimationFrame(function () { t.classList.add('show'); });
+    setTimeout(function () {
+      t.classList.remove('show');
+      setTimeout(function () { t.remove(); }, 400);
+    }, ms || 2600);
+  }
 
   function openAnkiFor(note) {
     if (!note) return;
-    var noteId = note.id;
-    var target = null;
-
-    if (/Android/i.test(navigator.userAgent)) {
-      target = ANDROID_INTENT;
-    } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      target = 'anki://x-callback-url/openNote?noteId=' + noteId;
-    } else {
-      target = 'anki://note/' + noteId;
-    }
-
-    var iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = target;
-    document.body.appendChild(iframe);
-    setTimeout(function () {
-      iframe.parentNode && iframe.parentNode.removeChild(iframe);
-    }, 1500);
-
+    var target = ankiDeepLink(note);
+    // Handy fallback: the exact search term is on the clipboard either way.
+    copyText('nid:' + note.id);
+    toast('Opening Anki at note ' + note.id + ' (nid:' + note.id + ' copied)');
+    try { window.location.href = target; } catch (e) { /* scheme not handled */ }
     if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) { /* noop */ } }
   }
 
@@ -427,6 +785,7 @@
       state.media = res.data.media;
       state.files = buildMediaMap(res.data.media);
       state.expanded = {};
+      state.typeFilter = defaultTypeFilter();
       state.fileName = fileName || '';
       state.fileSize = fileSize || 0;
       state.parseMs = Math.round(res.elapsed);
@@ -435,10 +794,14 @@
       ui.fileName.textContent = state.fileName + (state.fileSize ? '  (' + fmtBytes(state.fileSize) + ')' : '');
       ui.fileName.hidden = false;
       $('#new-file').hidden = false;
+      // landing screen fully steps aside — the deck list IS the screen now
       ui.dropzone.hidden = true;
+      if (ui.helpCard) ui.helpCard.hidden = true;
       ui.main.hidden = false;
+      if (ui.typeBar) ui.typeBar.hidden = false;
       renderNotes();
       updateStats();
+      try { window.scrollTo(0, 0); } catch (e) { /* noop */ }
     } catch (err) {
       if (reqId !== state.activeRequest) return;
       showError(err.message || String(err));
@@ -776,12 +1139,17 @@
     fmtDate: fmtDate,
     renderNotes: renderNotes,
     loadApkg: loadApkg,
-    handleShareTarget: handleShareTarget
+    handleShareTarget: handleShareTarget,
+    ankiDeepLink: ankiDeepLink,
+    cardClass: cardClass,
+    buildTypeBar: buildTypeBar
   };
 
   document.addEventListener('DOMContentLoaded', function () {
     var vEl = document.getElementById('version');
     if (vEl) vEl.textContent = 'v' + APP_VERSION;
+    if (!state.typeFilter) state.typeFilter = defaultTypeFilter();
+    buildTypeBar();
     registerSW();
     handleShareTarget().catch(function (e) { showError(e.message || String(e)); });
   });

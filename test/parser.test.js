@@ -34,7 +34,7 @@ function load(name) {
 
 /** Assertions shared by every generation — the same deck, three formats. */
 function assertSameDeck(res, label) {
-  assert.strictEqual(res.notes.length, 3, label + ': 3 notes (dummy anki2 skipped)');
+  assert.strictEqual(res.notes.length, 4, label + ': 4 notes (dummy anki2 skipped)');
   res.notes.forEach((n) => {
     assert.ok(!/please update to the latest anki version/i.test(n.fields.join(' ')),
       label + ': dummy warning note must not leak through');
@@ -53,8 +53,8 @@ function assertSameDeck(res, label) {
   const cloze = res.notes.find((n) => n.id === 1003);
   assert.strictEqual(cloze.modelName, 'Cloze', label + ': cloze model');
 
-  assert.strictEqual(res.cards.length, 3, label + ': 3 cards');
-  assert.strictEqual(res.media.length, 2, label + ': 2 media files');
+  assert.strictEqual(res.cards.length, 5, label + ': 5 cards');
+  assert.strictEqual(res.media.length, 3, label + ': 3 media files');
 
   const svg = res.media.find((m) => m.name === 'einstein.svg');
   assert.ok(svg, label + ': einstein.svg extracted');
@@ -63,6 +63,10 @@ function assertSameDeck(res, label) {
   assert.ok(mp3, label + ': note.mp3 extracted');
   assert.strictEqual(mp3.bytes.length, 18, label + ': mp3 byte length exact');
   assert.strictEqual(mp3.bytes[0], 0x49, label + ': mp3 magic byte');
+  const png = res.media.find((m) => m.name === 'cell-diagram.png');
+  assert.ok(png, label + ': cell-diagram.png extracted');
+  assert.strictEqual(png.bytes[0], 0x89, label + ': png magic byte');
+  assert.ok(png.bytes.length > 100, label + ': png bytes present');
   return { svg, mp3 };
 }
 
@@ -117,13 +121,59 @@ function assertSameDeck(res, label) {
   const parsed = AnkiParser.parseMediaEntries(new Uint8Array(msg));
   assert.deepStrictEqual(parsed, { '0': 'a.jpg', '7': 'b.mp3' }, 'MediaEntries protobuf decode');
 
-  // --- 5) not-a-package error is friendly ---------------------------------------
+  // --- 5) image occlusion: detection + shape-text parsing -----------------------
+  const ioNote = modern.notes.find((n) => n.id === 1004);
+  assert.ok(ioNote, 'modern: IO note present');
+  assert.strictEqual(ioNote.modelName, 'Image Occlusion', 'modern: IO notetype name');
+  const det = AnkiParser.detectImageOcclusion(ioNote.fields, ioNote.fieldNames, ioNote.modelName);
+  assert.ok(det, 'modern: IO note detected');
+  assert.strictEqual(det.kind, 'cloze', 'modern: IO kind cloze');
+  assert.strictEqual(det.image, 0, 'modern: image field index');
+  assert.strictEqual(det.occlusions, 1, 'modern: occlusions field index');
+
+  const shapes = AnkiParser.parseOcclusionShapes(ioNote.fields[1]);
+  assert.strictEqual(shapes.length, 4, 'IO: 4 shapes parsed');
+  assert.deepStrictEqual(shapes.map((s) => s.shape), ['rect', 'ellipse', 'polygon', 'text'], 'IO: shape kinds');
+  assert.deepStrictEqual(shapes.map((s) => s.ordinal), [1, 1, 2, 3], 'IO: cloze ordinals');
+  assert.strictEqual(shapes[0].props.left, '.2', 'IO: rect left prop');
+  assert.strictEqual(shapes[0].props.oi, '0', 'IO: occlude-inactive prop');
+  assert.strictEqual(shapes[1].props.rx, '.12', 'IO: ellipse rx prop');
+  assert.strictEqual(shapes[3].props.text, 'Nucleus', 'IO: text label prop');
+  assert.strictEqual(shapes[3].props.fs, '24', 'IO: text font size prop');
+
+  // escapes: Anki's grammar allows \: and \\ inside values
+  const esc = AnkiParser.parseOcclusionShapes('{{c1::text:text=a\\:b\\\\c:left=.5}}');
+  assert.strictEqual(esc.length, 1, 'IO: escaped token parsed');
+  assert.strictEqual(esc[0].props.text, 'a:b\\c', 'IO: escapes unfolded');
+
+  // bare (un-cloze-wrapped) tokens are treated as ordinal 0
+  const bare = AnkiParser.parseOcclusionShapes('rect:left=.1:top=.2:width=.3:height=.4');
+  assert.strictEqual(bare.length, 1, 'IO: bare token parsed');
+  assert.strictEqual(bare[0].ordinal, 0, 'IO: bare token ordinal 0');
+
+  // legacy Image Occlusion Enhanced: literal <svg> masks field
+  const legacyDet = AnkiParser.detectImageOcclusion(
+    ['<img src="a.png">', '<svg width="600" height="450"><rect x="10" y="20" width="30" height="40"/></svg>', '', ''],
+    ['Image', 'Occlusion', 'Header', 'Back Extra'],
+    'Image Occlusion Enhanced'
+  );
+  assert.ok(legacyDet, 'IOE: detected');
+  assert.strictEqual(legacyDet.kind, 'svg', 'IOE: kind svg');
+
+  // ordinary notes must NOT be misdetected
+  assert.strictEqual(
+    AnkiParser.detectImageOcclusion(['What is 2+2?', '4'], ['Front', 'Back'], 'Basic'),
+    null,
+    'plain note is not image occlusion'
+  );
+
+  // --- 6) not-a-package error is friendly ---------------------------------------
   await assert.rejects(
     () => AnkiParser.parseApkg(pb('definitely not a zip file').buffer, OPTS),
     /not look like an Anki package|No Anki collection database found|invalid/i,
     'garbage input rejected with a helpful error'
   );
 
-  console.log('PASS — legacy1 + legacy2 + modern(zstd/protobuf) parsed, byte-identical media, in %d ms', ms);
+  console.log('PASS — legacy1 + legacy2 + modern(zstd/protobuf) parsed, byte-identical media + image occlusion, in %d ms', ms);
   process.exit(0);
 })().catch((e) => { console.error('FAIL:', e); process.exit(1); });

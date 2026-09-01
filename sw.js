@@ -17,10 +17,12 @@
  *     delete every cache that is not current (old shell + stale shared blobs),
  *     so existing installs migrate without any user action.
  * v3: answers SKIP_WAITING so the page can apply an update immediately.
+ * v4: cache bump shipping the card-type filter chips, image-occlusion
+ *     rendering and the dropzone/banner [hidden] fixes.
  */
 'use strict';
 
-var VERSION = 'anki-inspector-v3';
+var VERSION = 'anki-inspector-v4';
 var SHELL = [
   './',
   './index.html',
