@@ -222,6 +222,132 @@
     return String(html).replace(/<[^>]+>/g, '').replace(WS_RE, ' ').trim();
   }
 
+  /* ------------------------ image occlusion notes ---------------------------- */
+
+  /*
+   * Anki 23.10+/AnkiDroid 2.20+ "Image Occlusion" notes keep the base image in
+   * one field and the masks in an "Occlusions" field as CLOZE-WRAPPED text
+   * tokens (this is the exact grammar of Anki's own imageocclusion.rs):
+   *
+   *   {{c1::rect:left=.2325:top=.3261:width=.202:height=.0975:oi=1}}
+   *   {{c2::ellipse:left=.55:top=.5:rx=.12:ry=.18}}
+   *   {{c1::polygon:points=.1,.8 .35,.95 .15,1}}
+   *   {{c3::text:text=Label\:x:left=.05:top=.05:fs=24}}
+   *
+   * All coordinates are NORMALIZED (0..1) fractions of the image size, so they
+   * can be drawn over the image at any rendered size. `angle` is stored in
+   * 1/10000-of-a-turn steps (360deg = 10000). The legacy "Image Occlusion
+   * Enhanced" add-on instead stores literal <svg> markup with pixel geometry.
+   */
+
+  var OCCLUSION_CLOZE_RE = /\{\{c(\d+)::\s*([^\}]*(?:\}(?!\})[^\}]*)*)\}\}/gi;
+  var OCCLUSION_BARE_RE = /(?:^|[\s>])((?:rect|ellipse|polygon|text):(?:[^\s<>]|\\ )*)/gi;
+  var OCCLUSION_SHAPE_KINDS = { rect: 1, ellipse: 1, polygon: 1, text: 1 };
+
+  /** Split "a:1:b:2" on ':' honouring Anki's `\:` and `\\` escapes. */
+  function splitEscaped(str) {
+    var parts = [], cur = '';
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charAt(i);
+      if (ch === '\\' && (str.charAt(i + 1) === ':' || str.charAt(i + 1) === '\\')) {
+        cur += str.charAt(i + 1);
+        i += 1;
+      } else if (ch === ':') {
+        parts.push(cur);
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    parts.push(cur);
+    return parts;
+  }
+
+  /** "rect:left=.2:top=.3" -> { shape:'rect', props:{left:'.2', top:'.3'} } */
+  function parseOcclusionToken(token) {
+    var idx = token.indexOf(':');
+    if (idx < 1) return null;
+    var shape = token.slice(0, idx).trim().toLowerCase();
+    if (!OCCLUSION_SHAPE_KINDS[shape]) return null;
+    var props = {};
+    splitEscaped(token.slice(idx + 1)).forEach(function (pair) {
+      var eq = pair.indexOf('=');
+      if (eq < 1) return;
+      props[pair.slice(0, eq).trim()] = pair.slice(eq + 1);
+    });
+    return { shape: shape, props: props };
+  }
+
+  /**
+   * Parse an Occlusions field into shape records:
+   *   [{ shape:'rect'|'ellipse'|'polygon'|'text', ordinal:<cloze n>, props:{} }]
+   * Tokens wrapped in {{cN::…}} carry that cloze ordinal; bare tokens get 0.
+   */
+  function parseOcclusionShapes(text) {
+    if (!text) return [];
+    var src = String(text)
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ');
+    var shapes = [];
+    var rest = src.replace(OCCLUSION_CLOZE_RE, function (whole, ord, body) {
+      var rec = parseOcclusionToken(String(body).trim());
+      if (rec) { rec.ordinal = parseInt(ord, 10) || 0; shapes.push(rec); }
+      return ' ';
+    });
+    rest.replace(OCCLUSION_BARE_RE, function (whole, token) {
+      var rec = parseOcclusionToken(token);
+      if (rec) { rec.ordinal = 0; shapes.push(rec); }
+      return ' ';
+    });
+    return shapes;
+  }
+
+  /** Is this bare text distinctive enough to be an Occlusions field? */
+  function looksLikeOcclusionText(field) {
+    var f = String(field || '');
+    if (/\{\{c\d+::\s*(?:rect|ellipse|polygon|text):/i.test(f)) return true;
+    OCCLUSION_BARE_RE.lastIndex = 0;
+    var bare = f.replace(/<[^>]+>/g, ' ').match(OCCLUSION_BARE_RE);
+    return !!(bare && bare.length >= 2);
+  }
+
+  /**
+   * Detect an image-occlusion note and locate its fields.
+   * Returns null, or:
+   *   { kind:'cloze', image:<field idx>, occlusions:<field idx> }   (modern)
+   *   { kind:'svg',   image:<field idx>, occlusions:<field idx> }   (IO Enhanced)
+   *   { kind:'cloze', image:<field idx>, occlusions:-1 }            (name says IO
+   *    but the mask field is empty/unrecognised — still worth the preview)
+   */
+  function detectImageOcclusion(fields, fieldNames, modelName) {
+    if (!fields || !fields.length) return null;
+    var occlIdx = -1, imgIdx = -1, svgIdx = -1;
+    for (var i = 0; i < fields.length; i++) {
+      var f = String(fields[i] == null ? '' : fields[i]);
+      if (imgIdx === -1 && /<img\b/i.test(f)) imgIdx = i;
+      if (svgIdx === -1 && /<svg\b/i.test(f)) svgIdx = i;
+      if (occlIdx === -1 && looksLikeOcclusionText(f)) occlIdx = i;
+    }
+    var names = fieldNames || [];
+    var nameHint = /occlusion/i.test(modelName || '') ||
+      names.some(function (n) { return /occlusion/i.test(n || ''); });
+
+    if (occlIdx !== -1 && imgIdx !== -1 && occlIdx !== imgIdx) {
+      return { kind: 'cloze', image: imgIdx, occlusions: occlIdx };
+    }
+    if (svgIdx !== -1 && imgIdx !== -1 && svgIdx !== imgIdx) {
+      return { kind: 'svg', image: imgIdx, occlusions: svgIdx };
+    }
+    if (nameHint && imgIdx !== -1) {
+      var byName = -1;
+      for (var j = 0; j < names.length; j++) {
+        if (/occlusion/i.test(names[j] || '')) { byName = j; break; }
+      }
+      return { kind: 'cloze', image: imgIdx, occlusions: byName };
+    }
+    return null;
+  }
+
   /* --------------------------- collection detection -------------------------- */
 
   /**
@@ -569,6 +695,8 @@
     richHtml: richHtml,
     htmlToText: htmlToText,
     parseMediaEntries: parseMediaEntries,
+    parseOcclusionShapes: parseOcclusionShapes,
+    detectImageOcclusion: detectImageOcclusion,
     FIELD_SEP: FIELD_SEP,
     MEDIA_PREFIX: MEDIA_PREFIX
   };

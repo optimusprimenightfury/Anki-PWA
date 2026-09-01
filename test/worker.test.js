@@ -77,9 +77,9 @@ const workerCode = shim + '\n' + src;
 
   assert.strictEqual(res.id, 42, 'echoes request id');
   assert.ok(messages.some((m) => m.type === 'progress' && m.progress > 0), 'progress events');
-  assert.strictEqual(res.data.notes.length, 3, '3 notes');
-  assert.strictEqual(res.data.cards.length, 3, '3 cards');
-  assert.strictEqual(res.data.media.length, 2, '2 media');
+  assert.strictEqual(res.data.notes.length, 4, '4 notes');
+  assert.strictEqual(res.data.cards.length, 5, '5 cards');
+  assert.strictEqual(res.data.media.length, 3, '3 media');
   assert.strictEqual(res.data.media[0].bytes.constructor.name, 'Uint8Array', 'bytes transferred');
   assert.strictEqual(res.data.format.version, 1, 'legacy1 format reported');
   assert.ok(res.elapsed >= 0, 'elapsed ms reported');
@@ -100,10 +100,10 @@ const workerCode = shim + '\n' + src;
   const res2 = await done2;
 
   assert.strictEqual(res2.id, 43, 'modern: echoes request id');
-  assert.strictEqual(res2.data.notes.length, 3, 'modern: 3 notes (dummy anki2 skipped)');
+  assert.strictEqual(res2.data.notes.length, 4, 'modern: 4 notes (dummy anki2 skipped)');
   assert.strictEqual(res2.data.notes[0].modelName, 'Basic+', 'modern: notetype names from schema-18 tables');
   assert.strictEqual(res2.data.notes[0].cards[0].deckName, 'Biology::Cell Division', 'modern: deck names from decks table');
-  assert.strictEqual(res2.data.media.length, 2, 'modern: 2 media via protobuf+zstd index');
+  assert.strictEqual(res2.data.media.length, 3, 'modern: 3 media via protobuf+zstd index');
   assert.strictEqual(res2.data.media.find((m) => m.name === 'note.mp3').bytes.length, 18, 'modern: media zstd-decompressed');
   assert.strictEqual(res2.data.format.version, 3, 'modern: format version 3');
   assert.strictEqual(res2.data.format.compression, 'zstd', 'modern: zstd DB decoded');

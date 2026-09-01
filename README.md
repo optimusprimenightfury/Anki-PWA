@@ -3,17 +3,35 @@
 Inspect Anki `.apkg` packages **entirely on-device**: WebAssembly SQLite, in-memory
 unzip, zero uploads, no server. Designed for phones and tablets.
 
+> **What's new in v3.1** — drop-zone & notification boxes now properly disappear
+> after a deck loads (the `hidden` attribute is enforced with `!important`, so no
+> CSS `display:flex` rule can keep dead UI on screen); image-occlusion notes
+> render as real masked images with a Reveal toggle; card-type filter chips
+> (New / Learning / Review / Suspended / Buried / No cards) sit above sorting;
+> the ✏️ pencil opens AnkiDroid's Card Browser deep link at the exact note
+> instead of bouncing to the Play Store.
+
 - **Web Share Target API v2** — share any `.apkg` straight from the share sheet.
 - **Web Worker offloading** — unzip (`fflate`) + SQLite (`sql.js` WASM) run inside
   a worker, so the UI never blocks or OOMs on hardware-constrained tablets.
 - **Media mapping** — `media` JSON keys are mapped to real filenames; every image,
   SVG and audio file is extracted to a temporary `Blob URL` and `[sound:…]` /
   `<img src="…">` tags are rewritten to render instantly with zero network calls.
+- **Image occlusion rendering** — Image Occlusion notes (Anki 23.10+/AnkiDroid
+  2.20+ *and* the legacy "Image Occlusion Enhanced" add-on) are drawn as the real
+  masked image: the base image with the occlusion shapes overlaid, plus a
+  👁 Reveal button to see what is underneath.
+- **Card-type filter chips** — a chip row above the sort dropdown toggles
+  New / Learning / Review / Suspended / Buried / No-cards notes on and off,
+  on top of whatever sort order is active.
 - **Compact single-line note list** — excessive `<br>` / `<p>` noise is stripped
   while formatting and inline SVGs are preserved; tap ▾ for full fields.
-- **Editor bridge** — a ✏️ button per note tries `anki://` / Android
-  `intent://com.ichi2.anki…` deep links (with a Play Store fallback URL) to open
-  the note in the native Anki app.
+- **Editor bridge** — the ✏️ button per note opens the installed client at that
+  exact note: AnkiDroid's registered deep link
+  `anki://x-callback-url/browser?search=nid:<id>` (Card Browser pre-filtered,
+  AnkiDroid 2.22+) or AnkiMobile's `anki://x-callback-url/search?query=…`.
+  The `nid:` search term is copied to the clipboard as a fallback; there is
+  deliberately **no Play Store fallback URL**.
 - **Offline-capable** — service worker caches the app shell; parsing works offline.
 
 ## Supported package formats — legacy + new + upcoming

@@ -46,6 +46,43 @@ const MP3 = new Uint8Array([
   0x54, 0x41, 0x47, 0x00, 0x00, 0x00, 0x00, 0x00
 ]);
 
+/** Minimal 64×40 PNG (two colour bands) — the base image of the IO note. */
+const CELL_PNG = (() => {
+  const W = 64, H = 40;
+  const raw = [];
+  for (let y = 0; y < H; y++) {
+    raw.push(0); // filter: none
+    for (let x = 0; x < W; x++) {
+      raw.push(x < W / 2 ? 0x2a : 0xe0, y < H / 2 ? 0x7f : 0xb0, 0xff);
+    }
+  }
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4);
+  ihdr[8] = 8; ihdr[9] = 2; // 8-bit truecolour
+  return new Uint8Array(Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.from(raw))),
+    chunk('IEND', Buffer.alloc(0))
+  ]));
+})();
+
 const MODELS_JSON = {
   '1700000000000': {
     id: 1700000000000, name: 'Basic+',
@@ -63,6 +100,17 @@ const MODELS_JSON = {
       { name: 'Extra', ord: 1 }
     ],
     tmpls: [{ name: 'Cloze', ord: 0, qfmt: '{{cloze:Text}}', afmt: '{{cloze:Text}}<hr>{{Extra}}' }]
+  },
+  '1700000000003': {
+    id: 1700000000003, name: 'Image Occlusion',
+    flds: [
+      { name: 'Image', ord: 0 },
+      { name: 'Occlusions', ord: 1 },
+      { name: 'Header', ord: 2 },
+      { name: 'Back Extra', ord: 3 }
+    ],
+    // same cloze-text mask grammar AnkiDroid/Anki 23.10+ store
+    tmpls: [{ name: 'Card 1', ord: 0, qfmt: '{{Image}}{{cloze:Occlusions}}', afmt: '{{Image}}{{Occlusions}}<hr>{{Header}}{{Back Extra}}' }]
   }
 };
 const DECKS_JSON = {
@@ -73,12 +121,23 @@ const DECKS_JSON = {
 const NOTES = [
   { id: 1001, guid: 'a1b2c3d4', mid: 1700000000000, tags: 'physics vector', flds: ['What is the formula for force?', '<b>F = m × a</b><br><img src="einstein.svg">', 'Extra context here.'], mod: 1690000000 },
   { id: 1002, guid: 'e5f6a7b8', mid: 1700000000000, tags: 'physics audio', flds: ['Pronunciation of "mass"', '[sound:note.mp3]', ''], mod: 1689996400 },
-  { id: 1003, guid: 'c9d0e1f2', mid: 1700000000001, tags: 'biology', flds: ['Mitosis produces {{c1::two}} daughter {{c2::cells}}', 'Cloze deletion note.'], mod: 1690001800 }
+  { id: 1003, guid: 'c9d0e1f2', mid: 1700000000001, tags: 'biology', flds: ['Mitosis produces {{c1::two}} daughter {{c2::cells}}', 'Cloze deletion note.'], mod: 1690001800 },
+  {
+    id: 1004, guid: '0a1b2c3d', mid: 1700000000003, tags: 'biology histology', mod: 1690002200,
+    flds: [
+      '<img src="cell-diagram.png">',
+      '{{c1::rect:left=.2:top=.25:width=.35:height=.15:oi=0}} {{c1::ellipse:left=.6:top=.3:rx=.12:ry=.12}} {{c2::polygon:points=.15,.7 .4,.85 .2,1}} {{c3::text:text=Nucleus:left=.05:top=.05:fs=24}}',
+      'Label the cell organelles',
+      'Chapter 3 — cell biology'
+    ]
+  }
 ];
 const CARDS = [
   { id: 2001, nid: 1001, did: 1700000000002, ord: 0, type: 2, queue: 2, due: 1893456000, ivl: 3, factor: 2500, reps: 3, lapses: 0 },
   { id: 2002, nid: 1002, did: 1700000000002, ord: 0, type: 0, queue: 0, due: 1, ivl: 0, factor: 0, reps: 0, lapses: 0 },
-  { id: 2003, nid: 1003, did: 1, ord: 0, type: 1, queue: 1, due: 10, ivl: 0, factor: 0, reps: 0, lapses: 0 }
+  { id: 2003, nid: 1003, did: 1, ord: 0, type: 1, queue: 1, due: 10, ivl: 0, factor: 0, reps: 0, lapses: 0 },
+  { id: 2004, nid: 1004, did: 1700000000002, ord: 0, type: 2, queue: 2, due: 1893456100, ivl: 12, factor: 2100, reps: 6, lapses: 1 },
+  { id: 2005, nid: 1004, did: 1700000000002, ord: 1, type: 2, queue: -1, due: 1893456200, ivl: 12, factor: 2100, reps: 6, lapses: 1 }
 ];
 
 /* ------------------------------ protobuf helpers ----------------------------- */
@@ -218,9 +277,10 @@ async function main() {
   legacyDb.close();
   fs.writeFileSync(path.join(DIR, 'sample.apkg'), zipSync({
     'collection.anki2': legacyU8,
-    'media': strToU8(JSON.stringify({ 0: 'einstein.svg', 1: 'note.mp3' })),
+    'media': strToU8(JSON.stringify({ 0: 'einstein.svg', 1: 'note.mp3', 2: 'cell-diagram.png' })),
     'collection.media/einstein.svg': strToU8(SVG),
-    'collection.media/note.mp3': MP3
+    'collection.media/note.mp3': MP3,
+    'collection.media/cell-diagram.png': CELL_PNG
   }, { level: 6 }));
   console.log('Wrote sample.apkg (legacy 1 — Anki 2.0)');
 
@@ -235,9 +295,10 @@ async function main() {
     'collection.anki21': l2bytes,
     'collection.anki2': l2dummyBytes,
     'meta': strToU8(JSON.stringify({ version: 2 })),
-    'media': strToU8(JSON.stringify({ 0: 'einstein.svg', 1: 'note.mp3' })),
+    'media': strToU8(JSON.stringify({ 0: 'einstein.svg', 1: 'note.mp3', 2: 'cell-diagram.png' })),
     '0': strToU8(SVG),
-    '1': MP3
+    '1': MP3,
+    '2': CELL_PNG
   }, { level: 6 }));
   console.log('Wrote sample-legacy2.apkg (legacy 2 — Anki 2.1, numbered media)');
 
@@ -253,9 +314,10 @@ async function main() {
     'collection.anki21b': zstd(modBytes),
     'collection.anki2': modDummyBytes,
     'meta': zstd(packageMetadata(3)),
-    'media': zstd(mediaEntriesProto(['einstein.svg', 'note.mp3'])),
+    'media': zstd(mediaEntriesProto(['einstein.svg', 'note.mp3', 'cell-diagram.png'])),
     '0': zstd(strToU8(SVG)),
-    '1': zstd(MP3)
+    '1': zstd(MP3),
+    '2': zstd(CELL_PNG)
   }, { level: 0 })); // modern exports store entries (payloads carry compression)
   console.log('Wrote sample-modern.apkg (latest — Anki 2022+, zstd + protobuf)');
 }

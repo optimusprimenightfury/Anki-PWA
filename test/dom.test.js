@@ -44,7 +44,9 @@ const fzstd = devRequire('fzstd');
   // ---- polyfills jsdom lacks ------------------------------------------------
   window.URL.createObjectURL = () => 'blob:mock-' + Math.random().toString(36).slice(2);
   window.URL.revokeObjectURL = () => {};
+  // jsdom lacks scroll APIs
   window.HTMLElement.prototype.scrollIntoView = () => {};
+  window.scrollTo = () => {};
   if (typeof window.TextDecoder === 'undefined' && typeof TextDecoder !== 'undefined') {
     window.TextDecoder = TextDecoder; // Node's — jsdom doesn't ship one
   }
@@ -91,9 +93,12 @@ const fzstd = devRequire('fzstd');
   const doc = window.document;
 
   const notes = doc.querySelectorAll('.note');
-  assert.strictEqual(notes.length, 3, '3 notes rendered');
+  assert.strictEqual(notes.length, 4, '4 notes rendered');
   assert.strictEqual(doc.querySelector('.model-badge').textContent, 'Basic+', 'model badge');
   assert.ok(!doc.querySelector('#main').hidden, 'main visible');
+  // the landing screen must fully step aside once a deck is loaded
+  assert.ok(doc.querySelector('#dropzone').hidden, 'dropzone hidden after load');
+  assert.ok(doc.querySelector('#help-card').hidden, 'help card hidden after load');
 
   // media lives in the Back field (extra): expand and check <img> → blob
   doc.querySelector('.note .expand-btn').click();
@@ -109,8 +114,50 @@ const fzstd = devRequire('fzstd');
 
   // stats
   const stats = doc.querySelector('#stats').textContent;
-  assert.ok(stats.includes('3 notes'), 'stats: ' + stats);
-  assert.ok(stats.includes('2 media'), 'stats counts media');
+  assert.ok(stats.includes('4 notes'), 'stats: ' + stats);
+  assert.ok(stats.includes('3 media'), 'stats counts media');
+
+  // ---- image occlusion note: masked image preview instead of raw mask text -----
+  const ioNote = doc.querySelector('.note[data-id="1004"]');
+  assert.ok(ioNote, 'IO note rendered');
+  const ioImg = ioNote.querySelector('.io-frame img');
+  assert.ok(ioImg && ioImg.src.startsWith('blob:'), 'IO base image → blob URL');
+  const ioShapes = ioNote.querySelectorAll('.io-shape');
+  assert.strictEqual(ioShapes.length, 4, 'IO: 4 mask shapes drawn');
+  assert.ok(ioNote.querySelector('.io-shape.io-rect'), 'IO: rect mask');
+  assert.ok(ioNote.querySelector('.io-shape.io-ellipse'), 'IO: ellipse mask');
+  assert.ok(ioNote.querySelector('.io-shape.io-polygon'), 'IO: polygon mask');
+  assert.ok(ioNote.querySelector('.io-shape.io-text'), 'IO: text mask');
+  assert.strictEqual(ioNote.querySelector('.io-overlay').getAttribute('viewBox'), '0 0 640 480', 'IO: placeholder viewBox');
+  // reveal toggle flips masked ↔ transparent state
+  ioNote.querySelector('.io-toggle').click();
+  assert.ok(ioNote.querySelector('.io-preview').classList.contains('revealed'), 'IO: reveal toggles');
+  // raw occlusions field must NOT render as machine text in the extras
+  ioNote.querySelector('.expand-btn').click();
+  await new Promise((r) => setTimeout(r, 20));
+  const occlValue = ioNote.querySelector('.extra-value .io-summary');
+  assert.ok(occlValue && /mask/.test(occlValue.textContent), 'IO: occlusions field summarized, not dumped');
+
+  // ---- card-type filter chips (above the sort dropdown) ------------------------
+  const chips = [...doc.querySelectorAll('.type-chip')];
+  assert.strictEqual(chips.length, 6, 'six card-type chips');
+  assert.ok(doc.querySelector('#type-bar') && !doc.querySelector('#type-bar').hidden, 'type bar visible');
+  const chipById = (id) => chips.find((c) => c.dataset.type === id);
+  assert.strictEqual(chipById('new').querySelector('.chip-count').textContent, '1', 'new chip count');
+  assert.strictEqual(chipById('suspended').querySelector('.chip-count').textContent, '1', 'suspended chip count');
+  // toggling "New" off hides the only new-card note
+  chipById('new').click();
+  assert.strictEqual(doc.querySelectorAll('.note').length, 3, 'new filtered out');
+  assert.strictEqual(chipById('new').getAttribute('aria-pressed'), 'false', 'chip pressed state');
+  assert.ok(!doc.querySelector('#type-reset').hidden, 'reset appears when filtering');
+  // reset restores everything
+  doc.querySelector('#type-reset').click();
+  assert.strictEqual(doc.querySelectorAll('.note').length, 4, 'reset restores notes');
+  assert.strictEqual(chipById('new').getAttribute('aria-pressed'), 'true', 'chip reset state');
+
+  // card chips carry their type class
+  assert.ok(doc.querySelector('.note[data-id="1004"] .card-chip.k-due'), 'card chip class due');
+  assert.ok(doc.querySelector('.note[data-id="1004"] .card-chip.k-suspended'), 'card chip class suspended');
 
   // search filter
   const search = doc.querySelector('#search');
@@ -125,17 +172,35 @@ const fzstd = devRequire('fzstd');
   sort.value = 'model';
   sort.dispatchEvent(new window.Event('change', { bubbles: true }));
   const badges = [...doc.querySelectorAll('.model-badge')].map((b) => b.textContent);
-  assert.deepStrictEqual(badges, ['Basic+', 'Basic+', 'Cloze'], 'sorted by model');
+  assert.deepStrictEqual(badges, ['Basic+', 'Basic+', 'Cloze', 'Image Occlusion'], 'sorted by model');
 
   // pencil buttons exist
-  assert.strictEqual(doc.querySelectorAll('.edit-btn').length, 3, '3 pencil buttons');
+  assert.strictEqual(doc.querySelectorAll('.edit-btn').length, 4, '4 pencil buttons');
+
+  // deep links: AnkiDroid browser search by nid — never the Play Store
+  const link = window.AnkiInspector.ankiDeepLink({ id: 12345 }, 'Mozilla/5.0 (Linux; Android 14) Chrome');
+  assert.strictEqual(link, 'anki://x-callback-url/browser?search=nid%3A12345', 'AnkiDroid deep link');
+  const iosLink = window.AnkiInspector.ankiDeepLink({ id: 7 }, 'iPhone Safari');
+  assert.strictEqual(iosLink, 'anki://x-callback-url/search?query=nid%3A7', 'AnkiMobile deep link');
+  assert.ok(!/play\.google/.test(link), 'no Play Store fallback anywhere');
+
+  // card classification used by chips + card chips
+  assert.strictEqual(window.AnkiInspector.cardClass({ type: 0, queue: 0 }), 'new', 'class new');
+  assert.strictEqual(window.AnkiInspector.cardClass({ type: 1, queue: 1 }), 'learn', 'class learn');
+  assert.strictEqual(window.AnkiInspector.cardClass({ type: 2, queue: 2 }), 'due', 'class due');
+  assert.strictEqual(window.AnkiInspector.cardClass({ type: 2, queue: -1 }), 'suspended', 'class suspended');
+  assert.strictEqual(window.AnkiInspector.cardClass({ type: 2, queue: -3 }), 'buried', 'class buried');
+
+  // error banner really dismisses (hidden attribute, not just opacity)
+  const errBox = doc.querySelector('#error-box');
+  assert.ok(errBox.hidden, 'error box hidden initially');
 
   // ---- 2) modern (2022+) package end-to-end: zstd DB + protobuf media --------
   const mbuf = fs.readFileSync(path.join(ROOT, 'test', 'sample-modern.apkg'));
   const mab = mbuf.buffer.slice(mbuf.byteOffset, mbuf.byteOffset + mbuf.byteLength);
   await window.AnkiInspector.loadApkg(mab, 'modern.apkg', mab.byteLength);
   await new Promise((r) => setTimeout(r, 50));
-  assert.strictEqual(doc.querySelectorAll('.note').length, 3, 'modern: 3 notes rendered');
+  assert.strictEqual(doc.querySelectorAll('.note').length, 4, 'modern: 4 notes rendered');
   assert.ok(doc.querySelector('.model-badge').textContent === 'Basic+', 'modern: notetype from schema-18 tables');
   const mstats = doc.querySelector('#stats').textContent;
   assert.ok(mstats.includes('2022+'), 'modern: format label in stats: ' + mstats);
@@ -143,6 +208,6 @@ const fzstd = devRequire('fzstd');
   // version surfaced (self-update transparency)
   assert.ok(window.AnkiInspector.version, 'app version exposed');
 
-  console.log('PASS — DOM wiring: render, blob-URL media, expand, search, sort, edit buttons + modern zstd/protobuf package');
+  console.log('PASS — DOM wiring: render, blob-URL media, expand, search, sort, type chips, image occlusion, deep links + modern zstd/protobuf package');
   process.exit(0);
 })().catch((e) => { console.error('DOM TEST FAIL:', e); process.exit(1); });
